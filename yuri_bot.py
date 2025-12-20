@@ -16,8 +16,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 load_dotenv()
 
 # --- MODEL CONFIGURATION ---
-# UPDATED: Using the newly released Gemini 3.0 Flash (Dec 17, 2025)
-# If this string fails, try "gemini-3.0-flash-exp"
 CURRENT_MODEL_NAME = "gemini-2.0-flash"
 
 # Configure Gemini
