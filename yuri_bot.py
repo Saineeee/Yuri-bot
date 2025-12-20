@@ -172,7 +172,7 @@ async def get_gemini_response(user_id, text_input, image_input=None, prompt_over
 
     except Exception as e:
         print(f"Gemini API Error: {e}")
-        return "Brain empty. No thoughts. Just vibes. (Error 💀)"
+        return "(Error)"
 
 # --- EVENTS ---
 
