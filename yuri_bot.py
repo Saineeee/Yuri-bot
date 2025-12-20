@@ -16,7 +16,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 load_dotenv()
 
 # --- MODEL CONFIGURATION ---
-CURRENT_MODEL_NAME = "gemini-3.0-flash"
+CURRENT_MODEL_NAME = "gemini-3-flash"
 
 # Configure Gemini
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
