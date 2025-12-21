@@ -7,6 +7,7 @@ import asyncio
 import aiohttp
 import io
 import datetime
+from typing import Literal, Optional # Added for the sync command
 from dotenv import load_dotenv
 import google.generativeai as genai
 from PIL import Image
@@ -78,11 +79,24 @@ model = genai.GenerativeModel(
     system_instruction=SYSTEM_PROMPT
 )
 
+# --- BOT SETUP ---
 intents = discord.Intents.default()
 intents.message_content = True
 
-# Disable default help command
-bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
+# 1. Define the Custom Activity
+activity = discord.Activity(
+    type=discord.ActivityType.listening, 
+    name="get | /help"
+)
+
+# 2. Initialize Bot with Idle Status and Activity
+bot = commands.Bot(
+    command_prefix='!', 
+    intents=intents, 
+    help_command=None,
+    status=discord.Status.idle,
+    activity=activity
+)
 
 # --- DATABASE FUNCTIONS ---
 
@@ -211,15 +225,52 @@ async def on_message(message):
             wait_time = max(1.0, min(len(response_text) * 0.06, 12.0))
             await asyncio.sleep(wait_time)
             
-            # --- THE FIX IS HERE ---
-            # This makes the bot actually REPLY to the user's message
             try:
                 await message.reply(response_text, mention_author=False)
             except:
-                # Fallback if the message was deleted before she could reply
                 await message.channel.send(response_text)
 
     await bot.process_commands(message)
+
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user} (ID: {bot.user.id})')
+    print('------')
+    # Note: We do NOT sync here to avoid rate limits. Use !sync command.
+
+# --- SYNC COMMAND (IMPORTANT: RUN THIS TO FIX SLASH COMMANDS) ---
+@bot.command()
+async def sync(ctx, guilds: commands.Greedy[discord.Object], spec: Optional[Literal["~", "*", "^"]] = None) -> None:
+    if str(ctx.author.id) != str(OWNER_ID):
+        await ctx.send("You are not authorized to sync commands.")
+        return
+
+    if not guilds:
+        if spec == "~":
+            synced = await ctx.bot.tree.sync(guild=ctx.guild)
+        elif spec == "*":
+            ctx.bot.tree.copy_global_to(guild=ctx.guild)
+            synced = await ctx.bot.tree.sync(guild=ctx.guild)
+        elif spec == "^":
+            ctx.bot.tree.clear_commands(guild=ctx.guild)
+            await ctx.bot.tree.sync(guild=ctx.guild)
+            synced = []
+        else:
+            synced = await ctx.bot.tree.sync()
+
+        await ctx.send(f"Synced {len(synced)} commands {'globally' if spec is None else 'to the current guild'}.")
+        return
+
+    ret = 0
+    for guild in guilds:
+        try:
+            await ctx.bot.tree.sync(guild=guild)
+        except discord.HTTPException:
+            pass
+        else:
+            ret += 1
+
+    await ctx.send(f"Synced the tree to {ret}/{len(guilds)}.")
 
 # --- SLASH COMMANDS ---
 
@@ -232,12 +283,12 @@ async def help_command(interaction: discord.Interaction):
     )
     embed.add_field(name="💬 Chatting", value="Just tag me or say 'Yuri'. I speak English & Hinglish.", inline=False)
     embed.add_field(name="📸 Vision", value="Upload an image and I'll judge it.", inline=False)
-    embed.add_field(name="🔥 !roast @user", value="I will humble them real quick.", inline=True)
-    embed.add_field(name="💯 !rate @user", value="I rate their vibe (0-100%).", inline=True)
-    embed.add_field(name="❤️ !ship @u1 @u2", value="Toxic love calculator.", inline=True)
-    embed.add_field(name="🎱 !ask [question]", value="Sassy 8-Ball answers.", inline=True)
-    embed.add_field(name="🏷️ !rename @user", value="I give them a funny new nickname.", inline=True)
-    embed.add_field(name="🎲 !truth / !dare", value="Truth or Dare challenges.", inline=True)
+    embed.add_field(name="🔥 /roast @user", value="I will humble them real quick.", inline=True)
+    embed.add_field(name="💯 /rate @user", value="I rate their vibe (0-100%).", inline=True)
+    embed.add_field(name="❤️ /ship @u1 @u2", value="Toxic love calculator.", inline=True)
+    embed.add_field(name="🎱 /ask [question]", value="Sassy 8-Ball answers.", inline=True)
+    embed.add_field(name="🏷️ /rename @user", value="I give them a funny new nickname.", inline=True)
+    embed.add_field(name="🎲 /truth or /dare", value="Truth or Dare challenges.", inline=True)
     embed.set_footer(text="Yuri Bot | Developed by @sainnee")
     await interaction.response.send_message(embed=embed)
 
