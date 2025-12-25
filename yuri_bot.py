@@ -226,7 +226,7 @@ async def on_message(message):
             await asyncio.sleep(wait_time)
             
             try:
-                await message.reply(response_text, mention_author=False)
+                await message.reply(response_text, mention_author=True)
             except:
                 await message.channel.send(response_text)
 
