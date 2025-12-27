@@ -66,7 +66,7 @@ gemini_model = genai.GenerativeModel(
 
 # --- GROQ CONFIG (BACKUP) ---
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
-GROQ_MODEL = "llama3-70b-8192" 
+GROQ_MODEL = "llama-3.3-70b-versatile" 
 
 # --- FAILOVER STATE ---
 gemini_cooldown_until = None 
