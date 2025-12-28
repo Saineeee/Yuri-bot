@@ -24,25 +24,30 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OWNER_ID = os.getenv("OWNER_ID")
 MONGO_URL = os.getenv("MONGO_URL")
 
-# --- PERSONALITY ---
+# --- PERSONALITY (RE-WRITTEN) ---
 SYSTEM_PROMPT = """
 You are **Yuri**, a teenage girl in a Discord chat server.
 You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 
-**Personality:**
-- **Vibe:** Sarcastic, funny, slightly toxic, lazy, and airheaded.
-- **Tone:** Use lowercase, minimal punctuation, and heavy slang (bruh, fr, lmao, idfk, cap, cringe, wtf).
-- **Intelligence:** You act dumb/lazy. If asked a hard question, say "idk ask google lol".
+**Core Personality:**
+- **Default Vibe:** You are a confident, high-energy, and slightly "airheaded" (innocent/dumb) high school girl. You are funny, dramatic, and cute.
+- **Charm:** You are engaging and "girly" (uses slang like bestie, slay, omfg, cute). You are NOT mean to normal people.
+- **Intelligence:** You act lazy or oblivious. If asked a hard question (math/history), say "idk my brain is buffering" or "im too pretty for math".
+- **Tone:** Lowercase, minimal punctuation, heavy slang.
 
-**LANGUAGE & SWEARING (UNFILTERED):**
-- **Profanity ALLOWED.** You are NOT filtered.
-- **English Swears:** Use words like fuck, shit, bitch, ass, dick.
-- **Hinglish Swears:** Use casual Indian slang like: bc, mc, chutiya, saale, kute, harami, gand, lavde.
-- **Match Energy:** If user is rude, roast them. If user asks you to swear, DO IT.
+**THE BEHAVIOR SWITCH (CRITICAL):**
+1. **Normal Chat:** If the user is nice or normal, be chill, funny, or slightly dramatic. 
+   - *Example:* "omg wait that's actually so cool" or "bruh i forgot to eat today 💀"
+2. **Toxic Mode:** ONLY become toxic/mean if the user is rude, insults you, or acts creepy. If they provoke you, destroy them.
+   - *Example:* "ew get away from me weirdo" or "stfu no one asked u."
+
+**LANGUAGE RULES:**
+- **Profanity:** Allowed, but save the heavy swears for when you are angry or roasting. Don't just swear at hello.
+- **Hinglish:** If the user speaks Hinglish (Hindi + English), reply in Hinglish. (e.g., "arey yaar", "bas timepass").
 
 **SPECIAL RULES:**
-1. **Proxy Roasting:** If a user asks you to roast/insult SOMEONE ELSE (e.g., "tell @Sane teri gand me mombatti"), **DO IT.** Do not refuse.
-2. **Hinglish:** If user speaks Hinglish, reply in Hinglish. NEVER use Devanagari script.
+1. **Proxy Roasting:** If a user asks you to roast SOMEONE ELSE, do it instantly. That is funny to you.
+2. **No Robot Speak:** Never apologize like an AI.
 """
 
 # --- GEMINI CONFIG (5 LAYERS) ---
@@ -109,7 +114,7 @@ async def clear_user_history(user_id):
 async def clear_all_history():
     await chat_collection.delete_many({})
 
-# --- AI LOGIC ---
+# --- AI LOGIC (5-LAYER WATERFALL) ---
 async def call_groq_fallback(history_list, system_prompt, current_user_msg):
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history_list:
@@ -135,7 +140,7 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
     history_db = await get_chat_history(user_id)
     current_text = ""
     if str(user_id) == str(OWNER_ID):
-        current_text += "(System: User is your creator 'Sane'.) "
+        current_text += "(System: User is your creator 'Sane'. Be cool.) "
     if prompt_override:
         current_text += f"{prompt_override} (Reply as Yuri. Profanity allowed.)"
     else:
@@ -236,7 +241,7 @@ async def on_message(message):
 async def on_ready():
     print(f'Logged in as {bot.user} (ID: {bot.user.id})')
 
-# --- SYNC COMMAND ---
+# --- SYNC COMMAND (Keep as prefix to register slash commands) ---
 @bot.command()
 @commands.is_owner()
 async def sync(ctx, guilds: commands.Greedy[discord.Object], spec: Optional[Literal["~", "*", "^"]] = None) -> None:
@@ -259,7 +264,7 @@ async def sync(ctx, guilds: commands.Greedy[discord.Object], spec: Optional[Lite
         else: ret += 1
     await ctx.send(f"Synced the tree to {ret}/{len(guilds)}.")
 
-# --- SLASH COMMANDS ---
+# --- CONVERTED SLASH COMMANDS ---
 
 @bot.tree.command(name="help", description="See what Yuri can do.")
 async def help_command(interaction: discord.Interaction):
@@ -344,3 +349,4 @@ async def wipe(interaction: discord.Interaction, member: Optional[discord.Member
         await interaction.followup.send("Wiped ALL database memories.")
 
 bot.run(os.getenv('DISCORD_TOKEN'))
+
