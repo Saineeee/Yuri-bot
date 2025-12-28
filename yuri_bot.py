@@ -41,15 +41,14 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 - **Match Energy:** If user is rude, roast them. If user asks you to swear, DO IT.
 
 **SPECIAL RULES:**
-1. **Proxy Roasting:** If a user asks you to roast/insult SOMEONE ELSE (e.g., "tell @Sane teri gand me mombatti"), **DO IT.** Do not refuse.
+1. **Proxy Roasting:** If a user asks you to roast/insult SOMEONE ELSE, **DO IT.** Do not refuse.
 2. **Hinglish:** If user speaks Hinglish, reply in Hinglish. NEVER use Devanagari script.
 """
 
-# --- GEMINI CONFIG (PRIMARY) ---
+# --- GEMINI CONFIG (5 LAYERS) ---
 genai.configure(api_key=GEMINI_API_KEY)
-CURRENT_GEMINI_MODEL = "gemini-2.5-flash"
 
-# DISABLE SAFETY FILTERS
+# Uncensored Settings
 safety_settings = {
     HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
     HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -57,20 +56,23 @@ safety_settings = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
 }
 
-# --- CRITICAL FIX: Set system_instruction HERE, not inside the function ---
-gemini_model = genai.GenerativeModel(
-    model_name=CURRENT_GEMINI_MODEL,
-    safety_settings=safety_settings,
-    system_instruction=SYSTEM_PROMPT 
-)
+# --- INITIALIZE ALL 4 GEMINI MODELS ---
+# Layer 1 (Primary)
+model_1 = genai.GenerativeModel(model_name="gemini-3-flash-preview", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
+# Layer 2 (Backup A)
+model_2 = genai.GenerativeModel(model_name="gemini-2.5-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
+# Layer 3 (Backup B)
+model_3 = genai.GenerativeModel(model_name="gemini-2.0-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
+# Layer 4 (Backup C)
+model_4 = genai.GenerativeModel(model_name="gemini-1.5-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
 
-# --- GROQ CONFIG (BACKUP) ---
+# --- GROQ CONFIG (LAYER 5) ---
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 GROQ_MODEL = "llama-3.3-70b-versatile" 
 
-# --- FAILOVER STATE ---
-gemini_cooldown_until = None 
-gemini_fail_count = 0 
+# --- FAILOVER STATE TRACKERS ---
+cooldowns = {1: None, 2: None, 3: None, 4: None}
+fail_counts = {1: 0, 2: 0, 3: 0, 4: 0}
 
 # --- DATABASE ---
 if not MONGO_URL:
@@ -84,13 +86,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 activity = discord.Activity(type=discord.ActivityType.listening, name="get | /help")
-bot = commands.Bot(
-    command_prefix='!', 
-    intents=intents, 
-    help_command=None, 
-    status=discord.Status.idle, 
-    activity=activity
-)
+bot = commands.Bot(command_prefix='!', intents=intents, help_command=None, status=discord.Status.idle, activity=activity)
 
 # --- DATABASE FUNCTIONS ---
 async def setup_database():
@@ -114,7 +110,6 @@ async def clear_all_history():
     await chat_collection.delete_many({})
 
 # --- AI LOGIC ---
-
 async def call_groq_fallback(history_list, system_prompt, current_user_msg):
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history_list:
@@ -126,90 +121,69 @@ async def call_groq_fallback(history_list, system_prompt, current_user_msg):
 
     try:
         completion = await groq_client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=messages,
-            temperature=0.8,
-            max_tokens=256
+            model=GROQ_MODEL, messages=messages, temperature=0.8, max_tokens=256
         )
         return completion.choices[0].message.content
     except Exception as e:
         print(f"Groq Error: {e}")
-        return "bruh even my backup brain is dead rn (Error)"
+        return "bruh all 5 of my brains are dead rn (Fatal Error)"
 
 async def get_combined_response(user_id, text_input, image_input=None, prompt_override=None):
-    global gemini_cooldown_until, gemini_fail_count
+    global cooldowns, fail_counts
     
     # 1. Prepare Data
     history_db = await get_chat_history(user_id)
-    
     current_text = ""
     if str(user_id) == str(OWNER_ID):
-        current_text += "(System: User is your creator 'Sane'. Be cool.) "
-    
+        current_text += "(System: User is your creator 'Sane'.) "
     if prompt_override:
         current_text += f"{prompt_override} (Reply as Yuri. Profanity allowed.)"
     else:
         if text_input: current_text += text_input
         if image_input: current_text += " (User sent an image. Roast it or comment on it.)"
 
-    # 2. Check Cooldown
-    use_groq = False
-    if gemini_cooldown_until:
-        if datetime.datetime.now() < gemini_cooldown_until:
-            use_groq = True 
-        else:
-            gemini_cooldown_until = None 
-            print("INFO: Cooldown expired. Trying Gemini again...")
+    # 2. Reset Expired Cooldowns
+    now = datetime.datetime.now()
+    for layer in cooldowns:
+        if cooldowns[layer] and now > cooldowns[layer]:
+            cooldowns[layer] = None
+            print(f"INFO: Layer {layer} Cooldown Expired. Ready.")
 
-    # 3. Try Gemini
     response_text = ""
-    
-    if not use_groq:
-        try:
-            gemini_history = history_db + [{"role": "user", "parts": [current_text]}]
-            if image_input:
-                gemini_history[-1]["parts"].append(image_input)
+    successful_layer = None
+    gemini_layers = [(model_1, 1, "Gemini 3"), (model_2, 2, "Gemini 2.5"), (model_3, 3, "Gemini 2.0"), (model_4, 4, "Gemini 1.5")]
 
-            # --- CRITICAL FIX: REMOVED THE "_system_instruction" LINE FROM HERE ---
-            # It is now handled in the model definition at the top.
-
-            response = await gemini_model.generate_content_async(gemini_history)
-            response_text = response.text
-            
-            gemini_fail_count = 0 
-            
-        except Exception as e:
-            error_str = str(e)
-            if "429" in error_str or "ResourceExhausted" in error_str or "503" in error_str:
-                gemini_fail_count += 1
-                use_groq = True
-                
-                if gemini_fail_count >= 2:
-                    wait_time = datetime.timedelta(hours=24)
-                    print(f"⚠️ DAILY LIMIT (Strike 2). Switching to Groq for 24 HOURS.")
+    # 4. Iterate Layers
+    for model, layer_num, name in gemini_layers:
+        if successful_layer: break
+        if not cooldowns[layer_num]:
+            try:
+                gemini_history = history_db + [{"role": "user", "parts": [current_text]}]
+                if image_input: gemini_history[-1]["parts"].append(image_input)
+                response = await model.generate_content_async(gemini_history)
+                response_text = response.text
+                successful_layer = name
+                fail_counts[layer_num] = 0
+            except Exception as e:
+                error_str = str(e)
+                if "429" in error_str or "ResourceExhausted" in error_str or "503" in error_str or "not found" in error_str:
+                    fail_counts[layer_num] += 1
+                    wait_time = datetime.timedelta(hours=24) if fail_counts[layer_num] >= 2 else datetime.timedelta(minutes=1)
+                    cooldowns[layer_num] = now + wait_time
+                    print(f"⚠️ {name} FAILED. Switching to next layer.")
                 else:
-                    wait_time = datetime.timedelta(minutes=1)
-                    print(f"⚠️ RPM LIMIT (Strike 1). Switching to Groq for 1 MINUTE.")
-                
-                gemini_cooldown_until = datetime.datetime.now() + wait_time
-                
-            else:
-                print(f"Gemini Error (Non-RateLimit): {e}")
-                # Fallback to Groq even on random crashes to keep bot alive
-                use_groq = True
+                    cooldowns[layer_num] = now + datetime.timedelta(seconds=10)
 
-    # 4. Fallback
-    if use_groq:
-        if image_input and not text_input:
-             return "cant see images rn (my vision api is sleeping) just text me"
+    # 5. Fallback to Groq
+    if not successful_layer:
+        if image_input and not text_input: return "cant see images rn just text me"
         response_text = await call_groq_fallback(history_db, SYSTEM_PROMPT, current_text)
 
-    # 5. Save
+    # 6. Save
     if not prompt_override:
         user_save = text_input if text_input else "[Image]"
         await save_message(user_id, "user", user_save)
         await save_message(user_id, "model", response_text)
-
     return response_text
 
 async def get_image_from_url(url):
@@ -225,7 +199,6 @@ async def get_image_from_url(url):
 @bot.event
 async def on_message(message):
     if message.author == bot.user: return
-
     msg_content = message.content.lower()
     user_id = message.author.id
 
@@ -240,21 +213,22 @@ async def on_message(message):
     elif message.attachments and random.random() < 0.5: should_reply = True
 
     if should_reply:
-        async with message.channel.typing():
-            image_data = None
-            if message.attachments:
-                attachment = message.attachments[0]
-                if any(attachment.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg', 'webp']):
-                    image_data = await get_image_from_url(attachment.url)
-
-            clean_text = message.content.replace(f'<@{bot.user.id}>', 'Yuri').strip()
-            response_text = await get_combined_response(user_id, clean_text, image_data)
-
-            wait_time = max(1.0, min(len(response_text) * 0.05, 10.0))
-            await asyncio.sleep(wait_time)
-            
-            try: await message.reply(response_text, mention_author=True) 
-            except: await message.channel.send(response_text)
+        try:
+            async with message.channel.typing():
+                image_data = None
+                if message.attachments:
+                    attachment = message.attachments[0]
+                    if any(attachment.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg', 'webp']):
+                        image_data = await get_image_from_url(attachment.url)
+                
+                clean_text = message.content.replace(f'<@{bot.user.id}>', 'Yuri').strip()
+                response_text = await get_combined_response(user_id, clean_text, image_data)
+                wait_time = max(1.0, min(len(response_text) * 0.05, 10.0))
+                await asyncio.sleep(wait_time)
+                try: await message.reply(response_text, mention_author=True) 
+                except: await message.channel.send(response_text)
+        except discord.Forbidden: print(f"Perms Missing in {message.channel.name}.")
+        except Exception: pass
 
     await bot.process_commands(message)
 
@@ -262,12 +236,12 @@ async def on_message(message):
 async def on_ready():
     print(f'Logged in as {bot.user} (ID: {bot.user.id})')
 
+# --- SYNC COMMAND ---
 @bot.command()
 @commands.is_owner()
 async def sync(ctx, guilds: commands.Greedy[discord.Object], spec: Optional[Literal["~", "*", "^"]] = None) -> None:
     if not guilds:
-        if spec == "~":
-            synced = await ctx.bot.tree.sync(guild=ctx.guild)
+        if spec == "~": synced = await ctx.bot.tree.sync(guild=ctx.guild)
         elif spec == "*":
             ctx.bot.tree.copy_global_to(guild=ctx.guild)
             synced = await ctx.bot.tree.sync(guild=ctx.guild)
@@ -275,54 +249,98 @@ async def sync(ctx, guilds: commands.Greedy[discord.Object], spec: Optional[Lite
             ctx.bot.tree.clear_commands(guild=ctx.guild)
             await ctx.bot.tree.sync(guild=ctx.guild)
             synced = []
-        else:
-            synced = await ctx.bot.tree.sync()
+        else: synced = await ctx.bot.tree.sync()
         await ctx.send(f"Synced {len(synced)} commands.")
         return
-
     ret = 0
     for guild in guilds:
-        try:
-            await ctx.bot.tree.sync(guild=guild)
+        try: await ctx.bot.tree.sync(guild=guild)
         except discord.HTTPException: pass
         else: ret += 1
     await ctx.send(f"Synced the tree to {ret}/{len(guilds)}.")
 
-# --- COMMANDS ---
+# --- SLASH COMMANDS ---
 
 @bot.tree.command(name="help", description="See what Yuri can do.")
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(title="✨ Yuri's Chaos Menu", description="Chat, Roast, Ship, etc.", color=discord.Color.from_rgb(255, 105, 180))
+    embed.add_field(name="Commands", value="/roast, /ship, /rate, /truth, /dare, /rename", inline=False)
     await interaction.response.send_message(embed=embed)
 
-@bot.command()
-async def rename(ctx, member: discord.Member = None):
-    if member is None: member = ctx.author
-    if ctx.guild.me.top_role <= member.top_role:
-        await ctx.send("Can't rename them lol.")
+@bot.tree.command(name="rename", description="Give someone a chaotic nickname.")
+@app_commands.describe(member="The user to rename")
+async def rename(interaction: discord.Interaction, member: discord.Member):
+    await interaction.response.defer() # Wait for AI
+    if interaction.guild.me.top_role <= member.top_role:
+        await interaction.followup.send("Can't rename them, they are too strong lol.")
         return
+    
     prompt = f"Create a funny, slightly mean nickname for {member.display_name}. Max 2 words."
-    async with ctx.typing():
-        raw_response = await get_combined_response(ctx.author.id, None, prompt_override=prompt)
-        try: await member.edit(nick=raw_response.replace('"', '').strip()[:32])
-        except: await ctx.send("Discord blocked me ugh.")
+    raw_response = await get_combined_response(interaction.user.id, None, prompt_override=prompt)
+    new_nick = raw_response.replace('"', '').strip()[:32]
+    
+    try: 
+        await member.edit(nick=new_nick)
+        await interaction.followup.send(f"Lol ok you are now **{new_nick}** ✨")
+    except: 
+        await interaction.followup.send(f"I chose **{new_nick}**, but Discord blocked me from changing it. 🙄")
 
-@bot.command()
-async def roast(ctx, member: discord.Member = None):
-    if member is None: member = ctx.author
-    async with ctx.typing():
-        response = await get_combined_response(ctx.author.id, None, prompt_override=f"Roast {member.display_name} hard.")
-        await ctx.send(f"{member.mention} {response}")
+@bot.tree.command(name="roast", description="Absolutely destroy someone.")
+@app_commands.describe(member="The victim")
+async def roast(interaction: discord.Interaction, member: discord.Member):
+    await interaction.response.defer()
+    response = await get_combined_response(interaction.user.id, None, prompt_override=f"Roast {member.display_name} hard.")
+    await interaction.followup.send(f"{member.mention} {response}")
 
-@bot.command()
-async def wipe(ctx, member: discord.Member = None):
-    if str(ctx.author.id) != str(OWNER_ID): return
+@bot.tree.command(name="rate", description="Rate someone's vibe (0-100%).")
+@app_commands.describe(member="The person to rate")
+async def rate(interaction: discord.Interaction, member: discord.Member):
+    await interaction.response.defer()
+    response = await get_combined_response(interaction.user.id, None, prompt_override=f"Rate {member.display_name}'s vibe from 0 to 100%. Be mean and sarcastic.")
+    await interaction.followup.send(f"{member.mention} {response}")
+
+@bot.tree.command(name="ship", description="Check compatibility between two people.")
+@app_commands.describe(member1="First person", member2="Second person (optional)")
+async def ship(interaction: discord.Interaction, member1: discord.Member, member2: Optional[discord.Member] = None):
+    await interaction.response.defer()
+    target2 = member2 if member2 else interaction.user
+    prompt = f"Ship {member1.display_name} and {target2.display_name}. Give a % and a funny prediction."
+    response = await get_combined_response(interaction.user.id, None, prompt_override=prompt)
+    await interaction.followup.send(response)
+
+@bot.tree.command(name="ask", description="Ask Yuri a Yes/No question.")
+@app_commands.describe(question="Your question")
+async def ask(interaction: discord.Interaction, question: str):
+    await interaction.response.defer()
+    prompt = f"Answer this yes/no question sassily: {question}"
+    response = await get_combined_response(interaction.user.id, None, prompt_override=prompt)
+    await interaction.followup.send(f"**Q:** {question}\n**A:** {response}")
+
+@bot.tree.command(name="truth", description="Get a spicy Truth question.")
+async def truth(interaction: discord.Interaction):
+    await interaction.response.defer()
+    response = await get_combined_response(interaction.user.id, None, prompt_override="Give a funny, spicy teenage Truth question.")
+    await interaction.followup.send(f"**TRUTH:** {response}")
+
+@bot.tree.command(name="dare", description="Get a chaotic Dare.")
+async def dare(interaction: discord.Interaction):
+    await interaction.response.defer()
+    response = await get_combined_response(interaction.user.id, None, prompt_override="Give a funny, chaotic Dare for a discord user.")
+    await interaction.followup.send(f"**DARE:** {response}")
+
+@bot.tree.command(name="wipe", description="Admin Only: Wipe memory.")
+@app_commands.describe(member="User to wipe (leave empty for ALL)")
+async def wipe(interaction: discord.Interaction, member: Optional[discord.Member] = None):
+    if str(interaction.user.id) != str(OWNER_ID):
+        await interaction.response.send_message("Nice try, you're not my owner. 🙄", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
     if member:
         await clear_user_history(member.id)
-        await ctx.send("Wiped user memory.")
+        await interaction.followup.send(f"Wiped memories for {member.display_name}.")
     else:
         await clear_all_history()
-        await ctx.send("Wiped ALL memory.")
+        await interaction.followup.send("Wiped ALL database memories.")
 
 bot.run(os.getenv('DISCORD_TOKEN'))
-    
