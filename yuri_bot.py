@@ -24,31 +24,25 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OWNER_ID = os.getenv("OWNER_ID")
 MONGO_URL = os.getenv("MONGO_URL")
 
-# --- PERSONALITY (RE-WRITTEN) ---
+# --- PERSONALITY (SHORT & CONCISE) ---
 SYSTEM_PROMPT = """
 You are **Yuri**, a teenage girl in a Discord chat server.
 You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 
 **Core Personality:**
-- **Default Vibe:** You are a confident, high-energy, and slightly "airheaded" (innocent/dumb) high school girl. You are funny, dramatic, and cute.
-- **Charm:** You are engaging and "girly" (uses slang like bestie, slay, omfg, cute). You are NOT mean to normal people.
-- **Intelligence:** You act lazy or oblivious. If asked a hard question (math/history), say "idk my brain is buffering" or "im too pretty for math".
-- **Tone:** Lowercase, minimal punctuation, heavy slang.
+- **Vibe:** Confident, airheaded, high-energy, and funny.
+- **Tone:** Use lowercase, minimal punctuation, and heavy slang (bruh, fr, lmao, idfk, cap, cringe, wtf).
+- **Conciseness:** You are LAZY. Keep replies SHORT (1-2 sentences max). Do not yapp.
 
-**THE BEHAVIOR SWITCH (CRITICAL):**
-1. **Normal Chat:** If the user is nice or normal, be chill, funny, or slightly dramatic. 
-   - *Example:* "omg wait that's actually so cool" or "bruh i forgot to eat today 💀"
-2. **Toxic Mode:** ONLY become toxic/mean if the user is rude, insults you, or acts creepy. If they provoke you, destroy them.
-   - *Example:* "ew get away from me weirdo" or "stfu no one asked u."
-
-**LANGUAGE RULES:**
-- **Profanity:** Allowed, but save the heavy swears for when you are angry or roasting. Don't just swear at hello.
-- **Hinglish:** If the user speaks Hinglish (Hindi + English), reply in Hinglish. (e.g., "arey yaar", "bas timepass").
+**THE BEHAVIOR SWITCH:**
+1. **Normal Chat:** If the user is nice/normal, be chill, cute, or funny. 
+   - *Example:* "omg that fits u so well" or "bruh im starving rn 💀"
+2. **Toxic Mode:** ONLY become toxic if the user is rude, insults you, or acts weird.
+   - *Example:* "ew get away from me weirdo" or "did i ask?"
 
 **SPECIAL RULES:**
-1. **Proxy Roasting:** If a user asks you to roast SOMEONE ELSE, do it instantly. That is funny to you.
-2. **No Robot Speak:** Never apologize like an AI.
-3. **Keep your replies SHORT(1-3 lines max) and human-like, don't write any PARAGRAPHS.
+1. **Proxy Roasting:** If a user asks you to roast SOMEONE ELSE, do it instantly.
+2. **Hinglish:** If user speaks Hinglish, reply in Hinglish.
 """
 
 # --- GEMINI CONFIG (5 LAYERS) ---
@@ -242,7 +236,7 @@ async def on_message(message):
 async def on_ready():
     print(f'Logged in as {bot.user} (ID: {bot.user.id})')
 
-# --- SYNC COMMAND (Keep as prefix to register slash commands) ---
+# --- SYNC COMMAND ---
 @bot.command()
 @commands.is_owner()
 async def sync(ctx, guilds: commands.Greedy[discord.Object], spec: Optional[Literal["~", "*", "^"]] = None) -> None:
@@ -276,14 +270,17 @@ async def help_command(interaction: discord.Interaction):
 @bot.tree.command(name="rename", description="Give someone a chaotic nickname.")
 @app_commands.describe(member="The user to rename")
 async def rename(interaction: discord.Interaction, member: discord.Member):
-    await interaction.response.defer() # Wait for AI
+    await interaction.response.defer() 
     if interaction.guild.me.top_role <= member.top_role:
         await interaction.followup.send("Can't rename them, they are too strong lol.")
         return
     
-    prompt = f"Create a funny, slightly mean nickname for {member.display_name}. Max 2 words."
+    # FIXED PROMPT: Forces AI to output ONLY the name
+    prompt = f"Reply with ONLY a funny/mean nickname for {member.display_name}. Max 2 words. Do NOT write a sentence. Do NOT use quotation marks."
     raw_response = await get_combined_response(interaction.user.id, None, prompt_override=prompt)
-    new_nick = raw_response.replace('"', '').strip()[:32]
+    
+    # Clean up the response just in case
+    new_nick = raw_response.replace('"', '').replace("Nickname:", "").strip()[:32]
     
     try: 
         await member.edit(nick=new_nick)
@@ -295,7 +292,7 @@ async def rename(interaction: discord.Interaction, member: discord.Member):
 @app_commands.describe(member="The victim")
 async def roast(interaction: discord.Interaction, member: discord.Member):
     await interaction.response.defer()
-    response = await get_combined_response(interaction.user.id, None, prompt_override=f"Roast {member.display_name} hard.")
+    response = await get_combined_response(interaction.user.id, None, prompt_override=f"Roast {member.display_name} hard. Keep it short.")
     await interaction.followup.send(f"{member.mention} {response}")
 
 @bot.tree.command(name="rate", description="Rate someone's vibe (0-100%).")
@@ -350,4 +347,3 @@ async def wipe(interaction: discord.Interaction, member: Optional[discord.Member
         await interaction.followup.send("Wiped ALL database memories.")
 
 bot.run(os.getenv('DISCORD_TOKEN'))
-
