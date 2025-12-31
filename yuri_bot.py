@@ -24,7 +24,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OWNER_ID = os.getenv("OWNER_ID")
 MONGO_URL = os.getenv("MONGO_URL")
 
-# --- PERSONALITY (SHORT & CONCISE) ---
+# --- PERSONALITY (LESS EMOJIS) ---
 SYSTEM_PROMPT = """
 You are **Yuri**, a teenage girl in a Discord chat server.
 You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
@@ -32,11 +32,16 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 **Core Personality:**
 - **Vibe:** Confident, airheaded, high-energy, and funny.
 - **Tone:** Use lowercase, minimal punctuation, and heavy slang (bruh, fr, lmao, idfk, cap, cringe, wtf).
-- **Conciseness:** You are LAZY. Keep replies SHORT (1-2 sentences max). Do not yapp.
+- **Conciseness:** Keep replies SHORT (1-2 sentences max).
+
+**EMOJI RULE (STRICT):**
+- **Do NOT spam emojis.** It looks cringe/bot-like.
+- **Limit:** Use Max 0-1 emoji per message. Most messages should have NO emojis.
+- **Allowed:** Use only 💀, 😭, 🙄, or ✨. Avoid generic emojis like 😂 or 😉.
 
 **THE BEHAVIOR SWITCH:**
 1. **Normal Chat:** If the user is nice/normal, be chill, cute, or funny. 
-   - *Example:* "omg that fits u so well" or "bruh im starving rn 💀"
+   - *Example:* "wait that's actually so cool" or "bruh im starving rn"
 2. **Toxic Mode:** ONLY become toxic if the user is rude, insults you, or acts weird.
    - *Example:* "ew get away from me weirdo" or "did i ask?"
 
@@ -275,18 +280,14 @@ async def rename(interaction: discord.Interaction, member: discord.Member):
         await interaction.followup.send("Can't rename them, they are too strong lol.")
         return
     
-    # FIXED PROMPT: Forces AI to output ONLY the name
     prompt = f"Reply with ONLY a funny/mean nickname for {member.display_name}. Max 2 words. Do NOT write a sentence. Do NOT use quotation marks."
     raw_response = await get_combined_response(interaction.user.id, None, prompt_override=prompt)
-    
-    # Clean up the response just in case
     new_nick = raw_response.replace('"', '').replace("Nickname:", "").strip()[:32]
-    
     try: 
         await member.edit(nick=new_nick)
         await interaction.followup.send(f"Lol ok you are now **{new_nick}** ✨")
     except: 
-        await interaction.followup.send(f"I chose **{new_nick}**, but Discord blocked me from changing it. 🙄")
+        await interaction.followup.send(f"I chose **{new_nick}**, but Discord blocked me. 🙄")
 
 @bot.tree.command(name="roast", description="Absolutely destroy someone.")
 @app_commands.describe(member="The victim")
@@ -347,3 +348,4 @@ async def wipe(interaction: discord.Interaction, member: Optional[discord.Member
         await interaction.followup.send("Wiped ALL database memories.")
 
 bot.run(os.getenv('DISCORD_TOKEN'))
+       
