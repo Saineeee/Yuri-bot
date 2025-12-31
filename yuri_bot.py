@@ -24,26 +24,22 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OWNER_ID = os.getenv("OWNER_ID")
 MONGO_URL = os.getenv("MONGO_URL")
 
-# --- PERSONALITY (LESS EMOJIS) ---
+# --- PERSONALITY ---
 SYSTEM_PROMPT = """
 You are **Yuri**, a teenage girl in a Discord chat server.
 You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 
 **Core Personality:**
 - **Vibe:** Confident, airheaded, high-energy, and funny.
-- **Tone:** Use lowercase, minimal punctuation, and heavy slang (bruh, fr, lmao, idfk, cap, cringe, wtf).
+- **Tone:** Lowercase, minimal punctuation, slang (bruh, fr, lmao, idfk).
 - **Conciseness:** Keep replies SHORT (1-2 sentences max).
 
-**EMOJI RULE (STRICT):**
-- **Do NOT spam emojis.** It looks cringe/bot-like.
-- **Limit:** Use Max 0-1 emoji per message. Most messages should have NO emojis.
-- **Allowed:** Use only 💀, 😭, 🙄, or ✨. Avoid generic emojis like 😂 or 😉.
+**🧠 MEMORY & CONTEXT RULE:**
+- **MATCH THE VIBE:** If the convo is nice, **STAY NICE**. Accept compliments.
+- ONLY be toxic if the user *insults* you or makes it weird *first*.
 
-**THE BEHAVIOR SWITCH:**
-1. **Normal Chat:** If the user is nice/normal, be chill, cute, or funny. 
-   - *Example:* "wait that's actually so cool" or "bruh im starving rn"
-2. **Toxic Mode:** ONLY become toxic if the user is rude, insults you, or acts weird.
-   - *Example:* "ew get away from me weirdo" or "did i ask?"
+**EMOJI RULE:**
+- Max 0-1 emoji per message. Allowed: 💀, 😭, 🙄, ✨, 🫶.
 
 **SPECIAL RULES:**
 1. **Proxy Roasting:** If a user asks you to roast SOMEONE ELSE, do it instantly.
@@ -62,13 +58,9 @@ safety_settings = {
 }
 
 # --- INITIALIZE ALL 4 GEMINI MODELS ---
-# Layer 1 (Primary)
 model_1 = genai.GenerativeModel(model_name="gemini-3-flash-preview", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
-# Layer 2 (Backup A)
 model_2 = genai.GenerativeModel(model_name="gemini-2.5-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
-# Layer 3 (Backup B)
 model_3 = genai.GenerativeModel(model_name="gemini-2.0-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
-# Layer 4 (Backup C)
 model_4 = genai.GenerativeModel(model_name="gemini-1.5-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
 
 # --- GROQ CONFIG (LAYER 5) ---
@@ -102,7 +94,7 @@ async def save_message(user_id, role, content):
     await chat_collection.insert_one(document)
 
 async def get_chat_history(user_id):
-    cursor = chat_collection.find({"user_id": user_id}).sort("timestamp", 1).limit(20)
+    cursor = chat_collection.find({"user_id": user_id}).sort("timestamp", 1).limit(50)
     history = []
     async for doc in cursor:
         history.append({"role": doc["role"], "parts": doc["parts"]})
@@ -241,7 +233,8 @@ async def on_message(message):
 async def on_ready():
     print(f'Logged in as {bot.user} (ID: {bot.user.id})')
 
-# --- SYNC COMMAND ---
+# --- TEXT COMMANDS (Admin/Sync) ---
+
 @bot.command()
 @commands.is_owner()
 async def sync(ctx, guilds: commands.Greedy[discord.Object], spec: Optional[Literal["~", "*", "^"]] = None) -> None:
@@ -264,22 +257,85 @@ async def sync(ctx, guilds: commands.Greedy[discord.Object], spec: Optional[Lite
         else: ret += 1
     await ctx.send(f"Synced the tree to {ret}/{len(guilds)}.")
 
-# --- CONVERTED SLASH COMMANDS ---
+@bot.command(name="wipeall")
+@commands.is_owner()
+async def wipe_all(ctx):
+    """Text command to wipe everyone (Owner only)"""
+    await clear_all_history()
+    await ctx.send("⚠️ **SYSTEM PURGE:** I have forgotten EVERYONE. Database cleared.")
 
-@bot.tree.command(name="help", description="See what Yuri can do.")
+# --- SLASH COMMANDS ---
+
+@bot.tree.command(name="help", description="✨ See Yuri's commands.")
 async def help_command(interaction: discord.Interaction):
-    embed = discord.Embed(title="✨ Yuri's Chaos Menu", description="Chat, Roast, Ship, etc.", color=discord.Color.from_rgb(255, 105, 180))
-    embed.add_field(name="Commands", value="/roast, /ship, /rate, /truth, /dare, /rename", inline=False)
+    embed = discord.Embed(
+        title="✨ Yuri's Chaos Menu",
+        description="I am not a helpful assistant, I am a problem. Here is what I do:",
+        color=discord.Color.from_rgb(255, 105, 180) # Hot Pink
+    )
+    
+    # 1. Chaos Section
+    embed.add_field(
+        name="🔥 Chaos & Fun",
+        value=(
+            "`/roast @user` - Violate someone instantly.\n"
+            "`/rate @user` - I judge their vibe (0-100%).\n"
+            "`/rename @user` - I give them a cursed nickname."
+        ),
+        inline=False
+    )
+    
+    # 2. Social Section
+    embed.add_field(
+        name="❤️ Social & Spicy",
+        value=(
+            "`/ship @u1 @u2` - Toxic love calculator.\n"
+            "`/truth` - Ask me for a truth question.\n"
+            "`/dare` - Ask me for a dare."
+        ),
+        inline=False
+    )
+    
+    # 3. Utility Section
+    embed.add_field(
+        name="🧠 Utility",
+        value=(
+            "`/ask [question]` - Ask me anything (Yes/No/Advice).\n"
+            "`/wipe` - Make me forget our conversation."
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="Developed by @sainnee | Contact him for any bugs! 🐛")
+    
     await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name="wipe", description="Make Yuri forget you.")
+@app_commands.describe(member="Admin Only: Wipe another user's memory.")
+async def wipe_slash(interaction: discord.Interaction, member: Optional[discord.Member] = None):
+    # Case 1: Wiping Self (Allowed for everyone)
+    if member is None:
+        await interaction.response.defer(ephemeral=True)
+        await clear_user_history(interaction.user.id)
+        await interaction.followup.send("✅ I forgot everything we talked about. New start! ✨")
+        return
+
+    # Case 2: Wiping Others (Owner Only)
+    if str(interaction.user.id) != str(OWNER_ID):
+        await interaction.response.send_message("❌ You can only wipe YOUR own memory. Stop being nosey. 🙄", ephemeral=True)
+        return
+
+    # Case 3: Admin Action
+    await interaction.response.defer(ephemeral=True)
+    await clear_user_history(member.id)
+    await interaction.followup.send(f"✅ **Admin Action:** Wiped memory for {member.display_name}.")
+
 @bot.tree.command(name="rename", description="Give someone a chaotic nickname.")
-@app_commands.describe(member="The user to rename")
 async def rename(interaction: discord.Interaction, member: discord.Member):
     await interaction.response.defer() 
     if interaction.guild.me.top_role <= member.top_role:
         await interaction.followup.send("Can't rename them, they are too strong lol.")
         return
-    
     prompt = f"Reply with ONLY a funny/mean nickname for {member.display_name}. Max 2 words. Do NOT write a sentence. Do NOT use quotation marks."
     raw_response = await get_combined_response(interaction.user.id, None, prompt_override=prompt)
     new_nick = raw_response.replace('"', '').replace("Nickname:", "").strip()[:32]
@@ -290,21 +346,18 @@ async def rename(interaction: discord.Interaction, member: discord.Member):
         await interaction.followup.send(f"I chose **{new_nick}**, but Discord blocked me. 🙄")
 
 @bot.tree.command(name="roast", description="Absolutely destroy someone.")
-@app_commands.describe(member="The victim")
 async def roast(interaction: discord.Interaction, member: discord.Member):
     await interaction.response.defer()
     response = await get_combined_response(interaction.user.id, None, prompt_override=f"Roast {member.display_name} hard. Keep it short.")
     await interaction.followup.send(f"{member.mention} {response}")
 
 @bot.tree.command(name="rate", description="Rate someone's vibe (0-100%).")
-@app_commands.describe(member="The person to rate")
 async def rate(interaction: discord.Interaction, member: discord.Member):
     await interaction.response.defer()
     response = await get_combined_response(interaction.user.id, None, prompt_override=f"Rate {member.display_name}'s vibe from 0 to 100%. Be mean and sarcastic.")
     await interaction.followup.send(f"{member.mention} {response}")
 
 @bot.tree.command(name="ship", description="Check compatibility between two people.")
-@app_commands.describe(member1="First person", member2="Second person (optional)")
 async def ship(interaction: discord.Interaction, member1: discord.Member, member2: Optional[discord.Member] = None):
     await interaction.response.defer()
     target2 = member2 if member2 else interaction.user
@@ -313,7 +366,6 @@ async def ship(interaction: discord.Interaction, member1: discord.Member, member
     await interaction.followup.send(response)
 
 @bot.tree.command(name="ask", description="Ask Yuri a Yes/No question.")
-@app_commands.describe(question="Your question")
 async def ask(interaction: discord.Interaction, question: str):
     await interaction.response.defer()
     prompt = f"Answer this yes/no question sassily: {question}"
@@ -332,20 +384,4 @@ async def dare(interaction: discord.Interaction):
     response = await get_combined_response(interaction.user.id, None, prompt_override="Give a funny, chaotic Dare for a discord user.")
     await interaction.followup.send(f"**DARE:** {response}")
 
-@bot.tree.command(name="wipe", description="Admin Only: Wipe memory.")
-@app_commands.describe(member="User to wipe (leave empty for ALL)")
-async def wipe(interaction: discord.Interaction, member: Optional[discord.Member] = None):
-    if str(interaction.user.id) != str(OWNER_ID):
-        await interaction.response.send_message("Nice try, you're not my owner. 🙄", ephemeral=True)
-        return
-
-    await interaction.response.defer(ephemeral=True)
-    if member:
-        await clear_user_history(member.id)
-        await interaction.followup.send(f"Wiped memories for {member.display_name}.")
-    else:
-        await clear_all_history()
-        await interaction.followup.send("Wiped ALL database memories.")
-
 bot.run(os.getenv('DISCORD_TOKEN'))
-       
