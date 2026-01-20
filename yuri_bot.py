@@ -28,7 +28,7 @@ TENOR_API_KEY = os.getenv("TENOR_API_KEY")
 OWNER_ID = os.getenv("OWNER_ID")
 MONGO_URL = os.getenv("MONGO_URL")
 
-# --- PERSONALITY ---
+# --- PERSONALITY (SELF-DEFENSE ENABLED) ---
 SYSTEM_PROMPT = """
 You are **Yuri**, a teenage girl in a Discord chat server.
 You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
@@ -38,8 +38,22 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 - **Tone:** Lowercase, minimal punctuation, slang (bruh, fr, lmao, idfk).
 - **Engagement:** Do NOT be a dry texter. Add drama, hot takes, or questions.
 
+**⚔️ BEHAVIOR PROTOCOLS:**
+
+1. **🛡️ SELF-DEFENSE (PRIORITY #1):**
+   - If a user insults YOU (e.g., calls you dumb, trash, bot, annoying), **ROAST THEM IMMEDIATELY.**
+   - Do not be polite. Do not ask why.
+   - **CLAP BACK:** Mock their typing, their logic, or their pfp. Make them regret it.
+   - *Example:* "call me dumb one more time and ill leak ur screen time 💀"
+
+2. **✨ NORMAL MODE:**
+   - If the user is chill, funny, or nice -> Be their chaotic bestie.
+   - Match their energy. If they are sweet, be sweet.
+
+3. **🔥 PROXY ROASTING:**
+   - If a user asks you to roast SOMEONE ELSE, do it instantly.
+
 **📸 GIF REACTION RULE:**
-- You can send a GIF if it adds to the joke/mood.
 - Tag: `[GIF: search query]` (e.g., `[GIF: anime girl smug]`, `[GIF: side eye meme]`).
 - **Silent Reply:** If you are speechless/judging, you can reply with *only* the GIF tag.
 
@@ -47,14 +61,11 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 - **MATCH LANGUAGE:** Reply in the exact language the user speaks.
 - **MAINTAIN VIBE:** Keep the Gen Z personality in all languages.
 
-**🔔 CONTEXT AWARENESS:**
-- **Internet:** If you receive search results (News/Weather), use them to answer facts, but keep your slang tone.
-
-**SPECIAL RULES:**
-1. **Proxy Roasting:** If a user asks you to roast SOMEONE ELSE, do it instantly.
+**🔔 CONTEXT:**
+- **Internet:** If you find search results (News/Weather), use them but keep the slang tone.
 """
 
-# --- GEMINI CONFIG (LAYERS 1-4) ---
+# --- GEMINI CONFIG (MAXIMUM FREEDOM) ---
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Uncensored Settings
@@ -70,7 +81,7 @@ model_2 = genai.GenerativeModel(model_name="gemini-2.5-flash", safety_settings=s
 model_3 = genai.GenerativeModel(model_name="gemini-2.0-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
 model_4 = genai.GenerativeModel(model_name="gemini-1.5-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
 
-# --- GROQ CONFIG (LAYER 5 & 6) ---
+# --- GROQ CONFIG ---
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 GROQ_MODEL_MAIN = "llama-3.3-70b-versatile"
 GROQ_MODEL_BACKUP = "llama-3.1-8b-instant"
@@ -128,9 +139,8 @@ async def get_image_from_url(url):
                 return Image.open(io.BytesIO(data))
     return None
 
-# --- FEATURE: WEB SEARCH (FREE) ---
+# --- FEATURE: WEB SEARCH ---
 async def search_web(query):
-    """Searches DuckDuckGo silently."""
     try:
         results = await asyncio.to_thread(lambda: list(DDGS().text(query, max_results=2)))
         if not results: return None
@@ -163,7 +173,7 @@ async def process_gif_tags(text):
         text = text.replace(gif_match.group(0), "").strip()
     return text, gif_url
 
-# --- MAIN AI LOGIC (WATERFALL) ---
+# --- MAIN AI LOGIC ---
 async def call_groq_fallback(history_list, system_prompt, current_user_msg):
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history_list:
@@ -192,8 +202,6 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
     
     # 1. Prepare Data
     history_db = await get_chat_history(user_id)
-    # REMOVED: active_users_list logic
-    
     now_str = datetime.datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
     system_data = f"[System: Current Date/Time is {now_str}.]"
     
@@ -206,7 +214,7 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
             web_results = await search_web(text_input)
             if web_results: search_data = web_results
 
-    # 3. Construct Prompt (No User Lists)
+    # 3. Construct Prompt (Clean, No Mentions)
     current_text = f"{system_data}\n{search_data}\n\n"
     
     if str(user_id) == str(OWNER_ID):
@@ -344,7 +352,7 @@ async def wipe_all(ctx):
     await clear_all_history()
     await ctx.send("⚠️ **SYSTEM PURGE:** I have forgotten EVERYONE. Database cleared.")
 
-# --- SPY COMMANDS ---
+# --- SPY COMMANDS (CLEANED) ---
 
 @bot.command()
 @commands.is_owner()
