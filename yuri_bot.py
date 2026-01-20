@@ -69,8 +69,8 @@ model_4 = genai.GenerativeModel(model_name="gemini-1.5-flash", safety_settings=s
 
 # --- GROQ CONFIG (LAYER 5 & 6) ---
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
-GROQ_MODEL_MAIN = "llama-3.3-70b-versatile"    # Smart but has limits
-GROQ_MODEL_BACKUP = "llama-3.1-8b-instant"     # Fast & High limits (Layer 6)
+GROQ_MODEL_MAIN = "llama-3.3-70b-versatile"    # Smart
+GROQ_MODEL_BACKUP = "llama-3.1-8b-instant"     # Fast (Layer 6)
 
 # --- FAILOVER STATE TRACKERS ---
 cooldowns = {1: None, 2: None, 3: None, 4: None}
@@ -121,7 +121,6 @@ async def call_groq_fallback(history_list, system_prompt, current_user_msg):
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": current_user_msg})
 
-    # ATTEMPT 1: Groq Smart Model (Layer 5)
     try:
         completion = await groq_client.chat.completions.create(
             model=GROQ_MODEL_MAIN, messages=messages, temperature=0.8, max_tokens=256
@@ -129,8 +128,6 @@ async def call_groq_fallback(history_list, system_prompt, current_user_msg):
         return completion.choices[0].message.content
     except Exception as e:
         print(f"⚠️ Groq Main Failed: {e}. Switching to Instant Model.")
-        
-        # ATTEMPT 2: Groq Fast Model (Layer 6)
         try:
             completion = await groq_client.chat.completions.create(
                 model=GROQ_MODEL_BACKUP, messages=messages, temperature=0.8, max_tokens=256
@@ -138,7 +135,6 @@ async def call_groq_fallback(history_list, system_prompt, current_user_msg):
             return completion.choices[0].message.content
         except Exception as e2:
             print(f"❌ Groq Backup Failed: {e2}")
-            # If even this fails, reply with a generic "busy" message instead of "fatal error"
             return random.choice([
                 "hold on my wifi is dying 💀 gimme a sec",
                 "bruh too many people talking at once, wait",
@@ -170,7 +166,7 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
     successful_layer = None
     gemini_layers = [(model_1, 1, "Gemini 3"), (model_2, 2, "Gemini 2.5"), (model_3, 3, "Gemini 2.0"), (model_4, 4, "Gemini 1.5")]
 
-    # 4. Iterate Layers (Gemini)
+    # 4. Iterate Layers
     for model, layer_num, name in gemini_layers:
         if successful_layer: break
         if not cooldowns[layer_num]:
@@ -191,7 +187,7 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
                 else:
                     cooldowns[layer_num] = now + datetime.timedelta(seconds=10)
 
-    # 5. Fallback to Groq (Layers 5 & 6)
+    # 5. Fallback to Groq
     if not successful_layer:
         if image_input and not text_input: return "cant see images rn just text me"
         response_text = await call_groq_fallback(history_db, SYSTEM_PROMPT, current_text)
@@ -253,7 +249,7 @@ async def on_message(message):
 async def on_ready():
     print(f'Logged in as {bot.user} (ID: {bot.user.id})')
 
-# --- TEXT COMMANDS (Admin/Sync) ---
+# --- TEXT COMMANDS (Admin/Spy/Wipe) ---
 
 @bot.command()
 @commands.is_owner()
@@ -280,9 +276,54 @@ async def sync(ctx, guilds: commands.Greedy[discord.Object], spec: Optional[Lite
 @bot.command(name="wipeall")
 @commands.is_owner()
 async def wipe_all(ctx):
-    """Text command to wipe everyone (Owner only)"""
     await clear_all_history()
     await ctx.send("⚠️ **SYSTEM PURGE:** I have forgotten EVERYONE. Database cleared.")
+
+# --- NEW SPY COMMANDS ---
+
+@bot.command()
+@commands.is_owner()
+async def spy(ctx):
+    """(Owner Only) List all users who have chatted with Yuri."""
+    user_ids = await chat_collection.distinct("user_id")
+    if not user_ids:
+        await ctx.send("🕵️ No users found in database.")
+        return
+    
+    spy_list = "--- 🕵️ YURI'S SURVEILLANCE LIST ---\n"
+    count = 0
+    for uid in user_ids:
+        user = bot.get_user(uid)
+        name = f"{user.name} ({user.display_name})" if user else "Unknown User"
+        spy_list += f"[{count+1}] ID: {uid} | Name: {name}\n"
+        count += 1
+        
+    file = discord.File(io.BytesIO(spy_list.encode()), filename="spy_list.txt")
+    await ctx.send(f"🕵️ Found **{len(user_ids)}** users in memory.", file=file)
+
+@bot.command()
+@commands.is_owner()
+async def spysee(ctx, member: discord.Member):
+    """(Owner Only) See full chat history of a specific user."""
+    # We use find() without limit to see EVERYTHING
+    cursor = chat_collection.find({"user_id": member.id}).sort("timestamp", 1)
+    
+    log_text = f"--- 🕵️ FULL CHAT LOG: {member.display_name} ({member.id}) ---\n"
+    count = 0
+    async for doc in cursor:
+        role = "Yuri" if doc['role'] == "model" else f"{member.name}"
+        content = doc['parts'][0]
+        time = doc['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+        log_text += f"[{time}] {role}: {content}\n"
+        count += 1
+
+    if count == 0:
+        await ctx.send(f"🕵️ No records found for {member.display_name}.")
+        return
+
+    file = discord.File(io.BytesIO(log_text.encode()), filename=f"spy_log_{member.id}.txt")
+    await ctx.send(f"🕵️ Extracting **{count}** messages...", file=file)
+
 
 # --- SLASH COMMANDS ---
 
@@ -333,16 +374,19 @@ async def help_command(interaction: discord.Interaction):
 @bot.tree.command(name="wipe", description="Make Yuri forget you.")
 @app_commands.describe(member="Admin Only: Wipe another user's memory.")
 async def wipe_slash(interaction: discord.Interaction, member: Optional[discord.Member] = None):
+    # Case 1: Wiping Self (Allowed for everyone)
     if member is None:
         await interaction.response.defer(ephemeral=True)
         await clear_user_history(interaction.user.id)
         await interaction.followup.send("✅ I forgot everything we talked about. New start! ✨")
         return
 
+    # Case 2: Wiping Others (Owner Only)
     if str(interaction.user.id) != str(OWNER_ID):
         await interaction.response.send_message("❌ You can only wipe YOUR own memory. Stop being nosey. 🙄", ephemeral=True)
         return
 
+    # Case 3: Admin Action
     await interaction.response.defer(ephemeral=True)
     await clear_user_history(member.id)
     await interaction.followup.send(f"✅ **Admin Action:** Wiped memory for {member.display_name}.")
