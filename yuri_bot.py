@@ -486,7 +486,6 @@ async def help_command(interaction: discord.Interaction):
         value=(
             "`/confess [msg]` - Send an anon confession to the set channel.\n"
             "`/crush @user` - Secretly match! If they pick you too, I DM both.\n"
-            "NOTE-(DW, Using this command will not notify the mentioned user)"
             "`/ship @user` - Check compatibility (I will lie).\n"
             "`/truth` or `/dare` - Get exposed or do something stupid."
         ), 
