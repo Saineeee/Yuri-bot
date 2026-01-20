@@ -34,14 +34,10 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 - **Tone:** Lowercase, minimal punctuation.
 - **Engagement:** Do NOT be a dry texter. Add a "hot take," a rhetorical question, or drama.
 
-**🌍 MULTILINGUAL MODE (CRITICAL):**
+**🌍 MULTILINGUAL MODE:**
 - **DETECT LANGUAGE:** You are fluent in ALL languages.
 - **MATCH LANGUAGE:** ALWAYS reply in the **exact same language** the user speaks.
-  - If they speak **Spanish**, reply in **Spanish** (use local slang like "wey", "no mames").
-  - If they speak **Hindi**, reply in **Hindi** (or Hinglish if they use latin script).
-  - If they speak **Japanese**, reply in **Japanese** (casual/anime tone).
-  - If they speak **Russian/French/German**, reply in that language.
-- **MAINTAIN VIBE:** Keep your chaotic/Gen Z personality in EVERY language. Do not become formal just because you switched languages.
+- **MAINTAIN VIBE:** Keep your chaotic/Gen Z personality in EVERY language.
 
 **🧠 MEMORY & CONTEXT:**
 - **MATCH THE VIBE:** If the convo is nice, be cute/funny. If it's chaotic, be chaotic.
@@ -54,7 +50,7 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 1. **Proxy Roasting:** If a user asks you to roast SOMEONE ELSE, do it instantly.
 """
 
-# --- GEMINI CONFIG (5 LAYERS) ---
+# --- GEMINI CONFIG (LAYERS 1-4) ---
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Uncensored Settings
@@ -65,15 +61,16 @@ safety_settings = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
 }
 
-# --- INITIALIZE ALL 4 GEMINI MODELS ---
+# Layer 1-4 Models
 model_1 = genai.GenerativeModel(model_name="gemini-3-flash-preview", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
 model_2 = genai.GenerativeModel(model_name="gemini-2.5-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
 model_3 = genai.GenerativeModel(model_name="gemini-2.0-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
 model_4 = genai.GenerativeModel(model_name="gemini-1.5-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
 
-# --- GROQ CONFIG (LAYER 5) ---
+# --- GROQ CONFIG (LAYER 5 & 6) ---
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
-GROQ_MODEL = "llama-3.3-70b-versatile" 
+GROQ_MODEL_MAIN = "llama-3.3-70b-versatile"    # Smart but has limits
+GROQ_MODEL_BACKUP = "llama-3.1-8b-instant"     # Fast & High limits (Layer 6)
 
 # --- FAILOVER STATE TRACKERS ---
 cooldowns = {1: None, 2: None, 3: None, 4: None}
@@ -114,7 +111,7 @@ async def clear_user_history(user_id):
 async def clear_all_history():
     await chat_collection.delete_many({})
 
-# --- AI LOGIC ---
+# --- AI LOGIC (6-LAYER WATERFALL) ---
 async def call_groq_fallback(history_list, system_prompt, current_user_msg):
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history_list:
@@ -124,14 +121,29 @@ async def call_groq_fallback(history_list, system_prompt, current_user_msg):
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": current_user_msg})
 
+    # ATTEMPT 1: Groq Smart Model (Layer 5)
     try:
         completion = await groq_client.chat.completions.create(
-            model=GROQ_MODEL, messages=messages, temperature=0.8, max_tokens=256
+            model=GROQ_MODEL_MAIN, messages=messages, temperature=0.8, max_tokens=256
         )
         return completion.choices[0].message.content
     except Exception as e:
-        print(f"Groq Error: {e}")
-        return "bruh all 5 of my brains are dead rn (Fatal Error)"
+        print(f"⚠️ Groq Main Failed: {e}. Switching to Instant Model.")
+        
+        # ATTEMPT 2: Groq Fast Model (Layer 6)
+        try:
+            completion = await groq_client.chat.completions.create(
+                model=GROQ_MODEL_BACKUP, messages=messages, temperature=0.8, max_tokens=256
+            )
+            return completion.choices[0].message.content
+        except Exception as e2:
+            print(f"❌ Groq Backup Failed: {e2}")
+            # If even this fails, reply with a generic "busy" message instead of "fatal error"
+            return random.choice([
+                "hold on my wifi is dying 💀 gimme a sec",
+                "bruh too many people talking at once, wait",
+                "my brain is buffering 😭 one sec"
+            ])
 
 async def get_combined_response(user_id, text_input, image_input=None, prompt_override=None):
     global cooldowns, fail_counts
@@ -158,7 +170,7 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
     successful_layer = None
     gemini_layers = [(model_1, 1, "Gemini 3"), (model_2, 2, "Gemini 2.5"), (model_3, 3, "Gemini 2.0"), (model_4, 4, "Gemini 1.5")]
 
-    # 4. Iterate Layers
+    # 4. Iterate Layers (Gemini)
     for model, layer_num, name in gemini_layers:
         if successful_layer: break
         if not cooldowns[layer_num]:
@@ -179,7 +191,7 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
                 else:
                     cooldowns[layer_num] = now + datetime.timedelta(seconds=10)
 
-    # 5. Fallback to Groq
+    # 5. Fallback to Groq (Layers 5 & 6)
     if not successful_layer:
         if image_input and not text_input: return "cant see images rn just text me"
         response_text = await call_groq_fallback(history_db, SYSTEM_PROMPT, current_text)
@@ -314,26 +326,23 @@ async def help_command(interaction: discord.Interaction):
         inline=False
     )
     
-    embed.set_footer(text="Developed by @sainnee | Contact me for any bugs!")
+    embed.set_footer(text="Developed by @sainnee | Contact him for any bugs! 🐛")
     
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="wipe", description="Make Yuri forget you.")
 @app_commands.describe(member="Admin Only: Wipe another user's memory.")
 async def wipe_slash(interaction: discord.Interaction, member: Optional[discord.Member] = None):
-    # Case 1: Wiping Self (Allowed for everyone)
     if member is None:
         await interaction.response.defer(ephemeral=True)
         await clear_user_history(interaction.user.id)
         await interaction.followup.send("✅ I forgot everything we talked about. New start! ✨")
         return
 
-    # Case 2: Wiping Others (Owner Only)
     if str(interaction.user.id) != str(OWNER_ID):
         await interaction.response.send_message("❌ You can only wipe YOUR own memory. Stop being nosey. 🙄", ephemeral=True)
         return
 
-    # Case 3: Admin Action
     await interaction.response.defer(ephemeral=True)
     await clear_user_history(member.id)
     await interaction.followup.send(f"✅ **Admin Action:** Wiped memory for {member.display_name}.")
@@ -393,4 +402,3 @@ async def dare(interaction: discord.Interaction):
     await interaction.followup.send(f"**DARE:** {response}")
 
 bot.run(os.getenv('DISCORD_TOKEN'))
-    
