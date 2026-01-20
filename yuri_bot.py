@@ -41,7 +41,7 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 
 **🧠 MEMORY & CONTEXT:**
 - **MATCH THE VIBE:** If the convo is nice, be cute/funny. If it's chaotic, be chaotic.
-- **Roasting:** ONLY be toxic if the user *insults* you first.
+- **Roasting:** ONLY be toxic if the user *insults* you first. and dont hold back if you are roasting.
 
 **EMOJI RULE:**
 - Max 0-1 emoji per message. Allowed: 💀, 😭, 🙄, ✨, 🫶, 💅.
@@ -50,7 +50,7 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 1. **Proxy Roasting:** If a user asks you to roast SOMEONE ELSE, do it instantly.
 """
 
-# --- GEMINI CONFIG (LAYERS 1-4) ---
+# --- GEMINI CONFIG ---
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Uncensored Settings
@@ -67,7 +67,7 @@ model_2 = genai.GenerativeModel(model_name="gemini-2.5-flash", safety_settings=s
 model_3 = genai.GenerativeModel(model_name="gemini-2.0-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
 model_4 = genai.GenerativeModel(model_name="gemini-1.5-flash", safety_settings=safety_settings, system_instruction=SYSTEM_PROMPT)
 
-# --- GROQ CONFIG (LAYER 5 & 6) ---
+# --- GROQ CONFIG ---
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 GROQ_MODEL_MAIN = "llama-3.3-70b-versatile"    # Smart
 GROQ_MODEL_BACKUP = "llama-3.1-8b-instant"     # Fast (Layer 6)
@@ -111,7 +111,7 @@ async def clear_user_history(user_id):
 async def clear_all_history():
     await chat_collection.delete_many({})
 
-# --- AI LOGIC (6-LAYER WATERFALL) ---
+# --- AI LOGIC ---
 async def call_groq_fallback(history_list, system_prompt, current_user_msg):
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history_list:
@@ -249,7 +249,7 @@ async def on_message(message):
 async def on_ready():
     print(f'Logged in as {bot.user} (ID: {bot.user.id})')
 
-# --- TEXT COMMANDS (Admin/Spy/Wipe) ---
+# --- TEXT COMMANDS (Admin/See/Wipe) ---
 
 @bot.command()
 @commands.is_owner()
@@ -279,22 +279,22 @@ async def wipe_all(ctx):
     await clear_all_history()
     await ctx.send("⚠️ **SYSTEM PURGE:** I have forgotten EVERYONE. Database cleared.")
 
-# --- NEW SPY COMMANDS (IMPROVED) ---
+# --- SEE COMMANDS ---
 
 @bot.command()
 @commands.is_owner()
 async def spy(ctx):
     """(Owner Only) List all users who have chatted with Yuri (With Real Names)."""
-    await ctx.send("🕵️ Scanning database... this might take a second.")
+    await ctx.send(" Scanning database... this might take a second.")
     
     # Get all unique user IDs from the database
     user_ids = await chat_collection.distinct("user_id")
     
     if not user_ids:
-        await ctx.send("🕵️ No users found in database.")
+        await ctx.send(" No users found in database.")
         return
     
-    spy_list = "--- 🕵️ YURI'S SURVEILLANCE LIST ---\n"
+    spy_list = "--- YURI'S SURVEILLANCE LIST ---\n"
     count = 0
     
     for uid in user_ids:
@@ -309,7 +309,7 @@ async def spy(ctx):
         count += 1
         
     file = discord.File(io.BytesIO(spy_list.encode()), filename="spy_list.txt")
-    await ctx.send(f"🕵️ Found **{len(user_ids)}** users.", file=file)
+    await ctx.send(f"⭕️ Found **{len(user_ids)}** users.", file=file)
 
 @bot.command()
 @commands.is_owner()
@@ -333,7 +333,7 @@ async def spysee(ctx, user_id: str):
     # Search Database
     cursor = chat_collection.find({"user_id": target_id}).sort("timestamp", 1)
     
-    log_text = f"--- 🕵️ CHAT LOG: {target_name} ({target_id}) ---\n"
+    log_text = f"--- CHAT LOG: {target_name} ({target_id}) ---\n"
     count = 0
     
     async for doc in cursor:
@@ -395,7 +395,7 @@ async def help_command(interaction: discord.Interaction):
         inline=False
     )
     
-    embed.set_footer(text="Developed by @sainnee | Contact him for any bugs! 🐛")
+    embed.set_footer(text="Developed by @sainnee | Contact him for any bugs! ")
     
     await interaction.response.send_message(embed=embed)
 
