@@ -16,7 +16,7 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from PIL import Image
 from motor.motor_asyncio import AsyncIOMotorClient
 from groq import AsyncGroq 
-from duckduckgo_search import DDGS  # FREE INTERNET SEARCH
+from duckduckgo_search import DDGS
 
 # --- 1. SETUP & CONFIG ---
 load_dotenv()
@@ -48,8 +48,7 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 - **MAINTAIN VIBE:** Keep the Gen Z personality in all languages.
 
 **🔔 CONTEXT AWARENESS:**
-- **Active Users:** You will see a list of users. Use `<@ID>` to ping them if relevant.
-- **Internet:** If you receive search results, use them to answer facts, but keep your slang tone.
+- **Internet:** If you receive search results (News/Weather), use them to answer facts, but keep your slang tone.
 
 **SPECIAL RULES:**
 1. **Proxy Roasting:** If a user asks you to roast SOMEONE ELSE, do it instantly.
@@ -164,22 +163,6 @@ async def process_gif_tags(text):
         text = text.replace(gif_match.group(0), "").strip()
     return text, gif_url
 
-# --- FEATURE: USER CONTEXT ---
-async def get_active_user_context():
-    recent_ids = await chat_collection.distinct("user_id")
-    recent_ids = recent_ids[-10:] 
-    context_str = "\n[SYSTEM CONTEXT: ACTIVE USERS]\n"
-    found_any = False
-    for uid in recent_ids:
-        user = bot.get_user(uid)
-        if user:
-            context_str += f"- {user.display_name}: <@{uid}>\n"
-            found_any = True
-    if found_any:
-        context_str += "(Use tags <@ID> to mention/ping them.)"
-        return context_str
-    return ""
-
 # --- MAIN AI LOGIC (WATERFALL) ---
 async def call_groq_fallback(history_list, system_prompt, current_user_msg):
     messages = [{"role": "system", "content": system_prompt}]
@@ -209,7 +192,8 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
     
     # 1. Prepare Data
     history_db = await get_chat_history(user_id)
-    active_users_list = await get_active_user_context()
+    # REMOVED: active_users_list logic
+    
     now_str = datetime.datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
     system_data = f"[System: Current Date/Time is {now_str}.]"
     
@@ -222,8 +206,9 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
             web_results = await search_web(text_input)
             if web_results: search_data = web_results
 
-    # 3. Construct Prompt
-    current_text = f"{system_data}\n{active_users_list}\n{search_data}\n\n"
+    # 3. Construct Prompt (No User Lists)
+    current_text = f"{system_data}\n{search_data}\n\n"
+    
     if str(user_id) == str(OWNER_ID):
         current_text += "(System: User is your creator 'Sane'. Be cool.) "
     if prompt_override:
@@ -359,7 +344,7 @@ async def wipe_all(ctx):
     await clear_all_history()
     await ctx.send("⚠️ **SYSTEM PURGE:** I have forgotten EVERYONE. Database cleared.")
 
-# --- SPY COMMANDS (BEAUTIFUL & SORTED) ---
+# --- SPY COMMANDS ---
 
 @bot.command()
 @commands.is_owner()
