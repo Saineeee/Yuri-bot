@@ -279,50 +279,78 @@ async def wipe_all(ctx):
     await clear_all_history()
     await ctx.send("⚠️ **SYSTEM PURGE:** I have forgotten EVERYONE. Database cleared.")
 
-# --- NEW SPY COMMANDS ---
+# --- NEW SPY COMMANDS (IMPROVED) ---
 
 @bot.command()
 @commands.is_owner()
 async def spy(ctx):
-    """(Owner Only) List all users who have chatted with Yuri."""
+    """(Owner Only) List all users who have chatted with Yuri (With Real Names)."""
+    await ctx.send("🕵️ Scanning database... this might take a second.")
+    
+    # Get all unique user IDs from the database
     user_ids = await chat_collection.distinct("user_id")
+    
     if not user_ids:
         await ctx.send("🕵️ No users found in database.")
         return
     
     spy_list = "--- 🕵️ YURI'S SURVEILLANCE LIST ---\n"
     count = 0
+    
     for uid in user_ids:
-        user = bot.get_user(uid)
-        name = f"{user.name} ({user.display_name})" if user else "Unknown User"
-        spy_list += f"[{count+1}] ID: {uid} | Name: {name}\n"
+        try:
+            # fetch_user is slower but GUARANTEES we get the username
+            user = await bot.fetch_user(uid)
+            name = f"{user.name} ({user.display_name})"
+        except:
+            name = "Unknown User (Left Discord?)"
+            
+        spy_list += f"[{count+1}] Name: {name} | ID: {uid}\n"
         count += 1
         
     file = discord.File(io.BytesIO(spy_list.encode()), filename="spy_list.txt")
-    await ctx.send(f"🕵️ Found **{len(user_ids)}** users in memory.", file=file)
+    await ctx.send(f"🕵️ Found **{len(user_ids)}** users.", file=file)
 
 @bot.command()
 @commands.is_owner()
-async def spysee(ctx, member: discord.Member):
-    """(Owner Only) See full chat history of a specific user."""
-    # We use find() without limit to see EVERYTHING
-    cursor = chat_collection.find({"user_id": member.id}).sort("timestamp", 1)
+async def spysee(ctx, user_id: str):
+    """(Owner Only) See chat history by pasting their ID."""
     
-    log_text = f"--- 🕵️ FULL CHAT LOG: {member.display_name} ({member.id}) ---\n"
+    # Convert string input to integer
+    try:
+        target_id = int(user_id)
+    except ValueError:
+        await ctx.send("❌ Please provide a valid User ID number.")
+        return
+
+    # Try to get their name for the log file
+    try:
+        user = await bot.fetch_user(target_id)
+        target_name = user.name
+    except:
+        target_name = str(target_id)
+
+    # Search Database
+    cursor = chat_collection.find({"user_id": target_id}).sort("timestamp", 1)
+    
+    log_text = f"--- 🕵️ CHAT LOG: {target_name} ({target_id}) ---\n"
     count = 0
+    
     async for doc in cursor:
-        role = "Yuri" if doc['role'] == "model" else f"{member.name}"
+        role = "Yuri" if doc['role'] == "model" else target_name
         content = doc['parts'][0]
-        time = doc['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
-        log_text += f"[{time}] {role}: {content}\n"
+        # Format timestamp nicely
+        time_str = doc['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+        
+        log_text += f"[{time_str}] {role}: {content}\n"
         count += 1
 
     if count == 0:
-        await ctx.send(f"🕵️ No records found for {member.display_name}.")
+        await ctx.send(f"🕵️ No records found for ID: {target_id}")
         return
 
-    file = discord.File(io.BytesIO(log_text.encode()), filename=f"spy_log_{member.id}.txt")
-    await ctx.send(f"🕵️ Extracting **{count}** messages...", file=file)
+    file = discord.File(io.BytesIO(log_text.encode()), filename=f"chat_log_{target_name}.txt")
+    await ctx.send(f"🕵️ Extracting **{count}** messages for **{target_name}**...", file=file)
 
 
 # --- SLASH COMMANDS ---
