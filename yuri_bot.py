@@ -461,13 +461,52 @@ async def crush(interaction: discord.Interaction, target: discord.Member):
 
 # --- FUN SLASH COMMANDS ---
 
-@bot.tree.command(name="help", description="✨ See Yuri's commands.")
+@bot.tree.command(name="help", description="✨ See Yuri's chaos menu.")
 async def help_command(interaction: discord.Interaction):
-    embed = discord.Embed(title="✨ Yuri's Chaos Menu", description="I am not a helpful assistant, I am a problem.", color=discord.Color.from_rgb(255, 105, 180))
-    embed.add_field(name="🔥 Chaos", value="/roast, /rate, /rename", inline=False)
-    embed.add_field(name="❤️ Social", value="/confess, /crush, /ship, /truth, /dare", inline=False)
-    embed.add_field(name="🧠 Utility", value="/ask, /wipe", inline=False)
-    embed.set_footer(text="Developed by @sainnee | Contact him for bugs! 🐛")
+    embed = discord.Embed(
+        title="✨ YURI'S COMMANDS MENU ",
+        description=" HERE's WHAT ELSE I CAN DO:",
+        color=discord.Color.from_rgb(255, 105, 180) # Hot Pink
+    )
+    
+    # --- CHAOS COMMANDS ---
+    embed.add_field(
+        name="🔥 **CHAOS & DRAMA**", 
+        value=(
+            "`/roast @user` - Absolutely destroy someone's ego.\n"
+            "`/rate @user` - I judge their vibe (0-100%).\n"
+            "`/rename @user` - I give them a cursed nickname."
+        ), 
+        inline=False
+    )
+    
+    # --- SOCIAL COMMANDS ---
+    embed.add_field(
+        name="❤️ **LOVE & SECRETS**", 
+        value=(
+            "`/confess [msg]` - Send an anon confession to the set channel.\n"
+            "`/crush @user` - Secretly match! If they pick you too, I DM both.\n"
+            "NOTE-(DW, Using this command will not notify the mentioned user)"
+            "`/ship @user` - Check compatibility (I will lie).\n"
+            "`/truth` or `/dare` - Get exposed or do something stupid."
+        ), 
+        inline=False
+    )
+    
+    # --- UTILITY COMMANDS ---
+    embed.add_field(
+        name="🧠 **BRAIN**", 
+        value=(
+            "`/ask [question]` - Ask me anything (I have Internet access!).\n"
+            "`/wipe` - I forget everything we talked about.\n"
+            "`/setup [channel]` - (Admin) Set where confessions go."
+        ), 
+        inline=False
+    )
+
+    # --- FOOTER ---
+    embed.set_footer(text="Developed by @sainnee | v2.0 (Toxic Mode Active)")
+    
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="wipe", description="Make Yuri forget you.")
