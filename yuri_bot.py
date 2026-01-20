@@ -249,108 +249,104 @@ async def on_message(message):
 async def on_ready():
     print(f'Logged in as {bot.user} (ID: {bot.user.id})')
 
-# --- TEXT COMMANDS (Admin/See/Wipe) ---
-
-@bot.command()
-@commands.is_owner()
-async def sync(ctx, guilds: commands.Greedy[discord.Object], spec: Optional[Literal["~", "*", "^"]] = None) -> None:
-    if not guilds:
-        if spec == "~": synced = await ctx.bot.tree.sync(guild=ctx.guild)
-        elif spec == "*":
-            ctx.bot.tree.copy_global_to(guild=ctx.guild)
-            synced = await ctx.bot.tree.sync(guild=ctx.guild)
-        elif spec == "^":
-            ctx.bot.tree.clear_commands(guild=ctx.guild)
-            await ctx.bot.tree.sync(guild=ctx.guild)
-            synced = []
-        else: synced = await ctx.bot.tree.sync()
-        await ctx.send(f"Synced {len(synced)} commands.")
-        return
-    ret = 0
-    for guild in guilds:
-        try: await ctx.bot.tree.sync(guild=guild)
-        except discord.HTTPException: pass
-        else: ret += 1
-    await ctx.send(f"Synced the tree to {ret}/{len(guilds)}.")
-
-@bot.command(name="wipeall")
-@commands.is_owner()
-async def wipe_all(ctx):
-    await clear_all_history()
-    await ctx.send("⚠️ **SYSTEM PURGE:** I have forgotten EVERYONE. Database cleared.")
-
-# --- SEE COMMANDS ---
+# --- IMPROVED SEEK COMM ---
 
 @bot.command()
 @commands.is_owner()
 async def spy(ctx):
-    """(Owner Only) List all users who have chatted with Yuri (With Real Names)."""
-    await ctx.send(" Scanning database... this might take a second.")
+    """(Owner Only) List all users sorted by ID."""
+    await ctx.send("🕵️ Accessing database records...")
     
-    # Get all unique user IDs from the database
+    # 1. Get IDs
     user_ids = await chat_collection.distinct("user_id")
     
     if not user_ids:
-        await ctx.send(" No users found in database.")
+        await ctx.send("🕵️ No users found in database.")
         return
+        
+    # 2. Sort Numerically
+    user_ids.sort()
     
-    spy_list = "--- YURI'S SURVEILLANCE LIST ---\n"
+    # 3. Build the Beautiful List
+    # We use formatting {uid:<20} to align the columns perfectly
+    spy_list = "==================================================\n"
+    spy_list += "🕵️  YURI'S SURVEILLANCE LIST (SORTED BY ID)\n"
+    spy_list += "==================================================\n\n"
+    spy_list += f"{'ID':<22} | {'USERNAME'}\n"
+    spy_list += "-" * 50 + "\n"
+    
     count = 0
-    
     for uid in user_ids:
-        try:
-            # fetch_user is slower but GUARANTEES we get the username
-            user = await bot.fetch_user(uid)
-            name = f"{user.name} ({user.display_name})"
-        except:
-            name = "Unknown User (Left Discord?)"
+        user = bot.get_user(uid)
+        
+        if user:
+            # Clean format: Name (Display Name)
+            name_str = f"{user.name} ({user.display_name})"
+        else:
+            name_str = "Unknown/Left Server"
             
-        spy_list += f"[{count+1}] Name: {name} | ID: {uid}\n"
+        spy_list += f"{str(uid):<22} | {name_str}\n"
         count += 1
         
-    file = discord.File(io.BytesIO(spy_list.encode()), filename="spy_list.txt")
-    await ctx.send(f"⭕️ Found **{len(user_ids)}** users.", file=file)
+    spy_list += "\n" + "=" * 50
+    spy_list += f"\nTotal Users Tracked: {count}"
+    
+    # 4. Send File
+    file = discord.File(io.BytesIO(spy_list.encode()), filename="spy_list_sorted.txt")
+    await ctx.send(f"🕵️ List generated. Found **{len(user_ids)}** users.", file=file)
 
 @bot.command()
 @commands.is_owner()
 async def spysee(ctx, user_id: str):
-    """(Owner Only) See chat history by pasting their ID."""
+    """(Owner Only) Get a clean, readable chat transcript."""
     
-    # Convert string input to integer
+    # 1. Validate ID
     try:
         target_id = int(user_id)
     except ValueError:
-        await ctx.send("❌ Please provide a valid User ID number.")
+        await ctx.send("❌ Invalid ID format.")
         return
 
-    # Try to get their name for the log file
+    # 2. Get Name
     try:
         user = await bot.fetch_user(target_id)
-        target_name = user.name
+        target_name = f"{user.name} ({user.display_name})"
     except:
-        target_name = str(target_id)
+        target_name = f"Unknown User ({target_id})"
 
-    # Search Database
+    # 3. Fetch Logs
     cursor = chat_collection.find({"user_id": target_id}).sort("timestamp", 1)
     
-    log_text = f"--- CHAT LOG: {target_name} ({target_id}) ---\n"
-    count = 0
+    # 4. Build Beautiful Transcript
+    log_text = "======================================================\n"
+    log_text += f"📄 CHAT TRANSCRIPT\n"
+    log_text += f"👤 USER:  {target_name}\n"
+    log_text += f"🆔 ID:    {target_id}\n"
+    log_text += f"📅 DATE:  {datetime.datetime.utcnow().strftime('%Y-%m-%d')}\n"
+    log_text += "======================================================\n\n"
     
+    count = 0
     async for doc in cursor:
-        role = "Yuri" if doc['role'] == "model" else target_name
+        role = "YURI 🤖" if doc['role'] == "model" else "USER 👤"
         content = doc['parts'][0]
-        # Format timestamp nicely
-        time_str = doc['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = doc['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
         
-        log_text += f"[{time_str}] {role}: {content}\n"
+        # Format:
+        # [Timestamp] ROLE
+        #    Message content here...
+        # -------------------
+        log_text += f"[{timestamp}] {role}:\n"
+        log_text += f"   {content}\n"
+        log_text += "-" * 54 + "\n"
+        
         count += 1
 
     if count == 0:
-        await ctx.send(f"🕵️ No records found for ID: {target_id}")
+        await ctx.send(f"🕵️ Database empty for ID: {target_id}")
         return
 
-    file = discord.File(io.BytesIO(log_text.encode()), filename=f"chat_log_{target_name}.txt")
-    await ctx.send(f"🕵️ Extracting **{count}** messages for **{target_name}**...", file=file)
+    file = discord.File(io.BytesIO(log_text.encode()), filename=f"chat_log_{target_id}.txt")
+    await ctx.send(f"🕵️ Transcript generated: **{count}** messages.", file=file)
 
 
 # --- SLASH COMMANDS ---
