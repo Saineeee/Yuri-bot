@@ -464,8 +464,8 @@ async def crush(interaction: discord.Interaction, target: discord.Member):
 @bot.tree.command(name="help", description="✨ See Yuri's chaos menu.")
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="✨ YURI'S COMMANDS MENU ",
-        description=" HERE's WHAT ELSE I CAN DO:",
+        title="✨ YURI'S CHAOS MENU ",
+        description=" Here's the list:",
         color=discord.Color.from_rgb(255, 105, 180) # Hot Pink
     )
     
@@ -504,7 +504,7 @@ async def help_command(interaction: discord.Interaction):
     )
 
     # --- FOOTER ---
-    embed.set_footer(text="Developed by @sainnee | v2.0 (Toxic Mode Active)")
+    embed.set_footer(text="Developed by @sainnee | Contact for any bugs!")
     
     await interaction.response.send_message(embed=embed)
 
