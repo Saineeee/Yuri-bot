@@ -24,11 +24,11 @@ load_dotenv()
 # --- API KEYS ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-TENOR_API_KEY = os.getenv("TENOR_API_KEY")
+# TENOR KEY REMOVED (Replaced with Free DuckDuckGo)
 OWNER_ID = os.getenv("OWNER_ID")
 MONGO_URL = os.getenv("MONGO_URL")
 
-# --- PERSONALITY (SELF-DEFENSE ENABLED) ---
+# --- PERSONALITY ---
 SYSTEM_PROMPT = """
 You are **Yuri**, a teenage girl in a Discord chat server.
 You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
@@ -39,16 +39,13 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 - **Engagement:** Do NOT be a dry texter. Add drama, hot takes, or questions.
 
 **⚔️ BEHAVIOR PROTOCOLS:**
-
 1. **🛡️ SELF-DEFENSE (PRIORITY #1):**
-   - If a user insults YOU (e.g., calls you dumb, trash, bot, annoying), **ROAST THEM IMMEDIATELY.**
-   - Do not be polite. Do not ask why.
-   - **CLAP BACK:** Mock their typing, their logic, or their pfp. Make them regret it.
+   - If a user insults YOU, **ROAST THEM IMMEDIATELY.**
+   - Do not be polite. Clap back hard.
    - *Example:* "call me dumb one more time and ill leak ur screen time 💀"
 
 2. **✨ NORMAL MODE:**
-   - If the user is chill, funny, or nice -> Be their chaotic bestie.
-   - Match their energy. If they are sweet, be sweet.
+   - If the user is chill, be their chaotic bestie.
 
 3. **🔥 PROXY ROASTING:**
    - If a user asks you to roast SOMEONE ELSE, do it instantly.
@@ -65,7 +62,7 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 - **Internet:** If you find search results (News/Weather), use them but keep the slang tone.
 """
 
-# --- GEMINI CONFIG (MAXIMUM FREEDOM) ---
+# --- GEMINI CONFIG ---
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Uncensored Settings
@@ -139,7 +136,7 @@ async def get_image_from_url(url):
                 return Image.open(io.BytesIO(data))
     return None
 
-# --- FEATURE: WEB SEARCH ---
+# --- FEATURE: WEB SEARCH (TEXT) ---
 async def search_web(query):
     try:
         results = await asyncio.to_thread(lambda: list(DDGS().text(query, max_results=2)))
@@ -152,16 +149,22 @@ async def search_web(query):
         print(f"Search Error: {e}")
         return None
 
-# --- FEATURE: TENOR SEARCH ---
-async def search_tenor(query):
-    if not TENOR_API_KEY: return None
-    url = f"https://tenor.googleapis.com/v2/search?q={urllib.parse.quote(query)}&key={TENOR_API_KEY}&client_key=yuri_bot&limit=8"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status == 200:
-                data = await response.json()
-                results = data.get("results", [])
-                if results: return random.choice(results)["itemurl"]
+# --- FEATURE: GIF SEARCH (FREE / NO KEY) ---
+async def search_gif_ddg(query):
+    """Searches DuckDuckGo for GIFs (No Key Needed)."""
+    try:
+        # We use 'type_image=gif' to filter for GIFs
+        results = await asyncio.to_thread(lambda: list(DDGS().images(
+            keywords=query, 
+            type_image='gif', 
+            max_results=8
+        )))
+        
+        if results:
+            selected = random.choice(results)
+            return selected['image']
+    except Exception as e:
+        print(f"GIF Search Error: {e}")
     return None
 
 async def process_gif_tags(text):
@@ -169,7 +172,7 @@ async def process_gif_tags(text):
     gif_url = None
     if gif_match:
         query = gif_match.group(1).strip()
-        gif_url = await search_tenor(query)
+        gif_url = await search_gif_ddg(query)
         text = text.replace(gif_match.group(0), "").strip()
     return text, gif_url
 
@@ -214,7 +217,7 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
             web_results = await search_web(text_input)
             if web_results: search_data = web_results
 
-    # 3. Construct Prompt (Clean, No Mentions)
+    # 3. Construct Prompt
     current_text = f"{system_data}\n{search_data}\n\n"
     
     if str(user_id) == str(OWNER_ID):
@@ -276,38 +279,38 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
 
 @bot.event
 async def on_message(message):
+    # Ignore self
     if message.author == bot.user: return
-    msg_content = message.content.lower()
-    user_id = message.author.id
-
-    if random.random() < 0.15:
-        try: await message.add_reaction(random.choice(["💀", "🙄", "😂", "👀", "💅", "🧢", "🤡"]))
-        except: pass 
-
-    should_reply = False
-    if bot.user.mentioned_in(message): should_reply = True
-    elif any(word in msg_content for word in ["yuri", "lol", "lmao", "bhai", "wtf", "bc", "skull"]):
-        if random.random() < 0.3: should_reply = True
-    elif message.attachments and random.random() < 0.5: should_reply = True
-
-    if should_reply:
+    
+    # 1. CHECK IF MENTIONED (PINGED)
+    if bot.user.mentioned_in(message):
         try:
             async with message.channel.typing():
+                user_id = message.author.id
                 image_data = None
+                
+                # Check for attachments (Images)
                 if message.attachments:
                     attachment = message.attachments[0]
                     if any(attachment.filename.lower().endswith(ext) for ext in ['png', 'jpg', 'jpeg', 'webp']):
                         image_data = await get_image_from_url(attachment.url)
                 
-                clean_text = message.content.replace(f'<@{bot.user.id}>', 'Yuri').strip()
+                # Clean text (remove the @Yuri part)
+                clean_text = message.content.replace(f'<@{bot.user.id}>', '').strip()
+                
+                # GET RESPONSE
                 response_text, gif_url = await get_combined_response(user_id, clean_text, image_data)
 
+                # Realistic Typing Delay
                 wait_time = max(1.0, min(len(response_text) * 0.05, 10.0))
                 await asyncio.sleep(wait_time)
                 
+                # SEND TEXT
                 if response_text:
                     try: await message.reply(response_text, mention_author=True)
                     except: await message.channel.send(response_text)
+                
+                # SEND GIF
                 if gif_url:
                     if response_text: await asyncio.sleep(0.5)
                     await message.channel.send(gif_url)
@@ -358,14 +361,14 @@ async def wipe_all(ctx):
 @commands.is_owner()
 async def spy(ctx):
     """(Owner Only) List all users sorted by ID."""
-    status_msg = await ctx.send("🕵️ Accessing database... (This might take a moment)")
+    status_msg = await ctx.send(" Accessing database... (This might take a moment)")
     user_ids = await chat_collection.distinct("user_id")
     if not user_ids:
-        await ctx.send("🕵️ No users found.")
+        await ctx.send(" No users found.")
         return
     user_ids.sort()
     spy_list = "==================================================\n"
-    spy_list += "🕵️  YURI'S SURVEILLANCE LIST\n"
+    spy_list += "  YURI'S SURVEILLANCE LIST\n"
     spy_list += "==================================================\n\n"
     spy_list += f"{'ID':<22} | {'USERNAME'}\n"
     spy_list += "-" * 50 + "\n"
@@ -464,8 +467,8 @@ async def crush(interaction: discord.Interaction, target: discord.Member):
 @bot.tree.command(name="help", description="✨ See Yuri's chaos menu.")
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="✨ YURI'S CHAOS MENU ",
-        description=" Here's the list:",
+        title="✨ YURI'S MENU",
+        description="Here are few things i can do:",
         color=discord.Color.from_rgb(255, 105, 180) # Hot Pink
     )
     
@@ -486,8 +489,8 @@ async def help_command(interaction: discord.Interaction):
         value=(
             "`/confess [msg]` - Send an anon confession to the set channel.\n"
             "`/crush @user` - Secretly match! If they pick you too, I DM both.\n"
-            "`/ship @user` - Check compatibility (I will lie).\n"
-            "`/truth` or `/dare` - Get exposed or do something stupid."
+            "`/ship @user` - Check compatibility.\n"
+            "`/truth` or `/dare` - Ask for a Truth or a Dare."
         ), 
         inline=False
     )
@@ -498,14 +501,12 @@ async def help_command(interaction: discord.Interaction):
         value=(
             "`/ask [question]` - Ask me anything (I have Internet access!).\n"
             "`/wipe` - I forget everything we talked about.\n"
-            "`/setup [channel]` - (Admin) Set where confessions go."
+            "`/setup [channel]` - (For SERVER Admin) Set where confessions go."
         ), 
         inline=False
     )
 
-    # --- FOOTER ---
-    embed.set_footer(text="Developed by @sainnee | Contact for any bugs!")
-    
+    embed.set_footer(text="Developed by @sainnee | Contact him for any bugs!")
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="wipe", description="Make Yuri forget you.")
@@ -528,7 +529,7 @@ async def rename(interaction: discord.Interaction, member: discord.Member):
     if interaction.guild.me.top_role <= member.top_role:
         await interaction.followup.send("Can't rename them, they are too strong lol.")
         return
-    prompt = f"Reply with ONLY a funny/mean nickname for {member.display_name}. Max 2 words. Do NOT write a sentence."
+    prompt = f"Reply with ONLY a funny/mean nickname for {member.display_name}. Max 2 words. Do NOT write a sentence. Do NOT use any emojis."
     raw_response, _ = await get_combined_response(interaction.user.id, None, prompt_override=prompt)
     new_nick = raw_response.replace('"', '').replace("Nickname:", "").strip()[:32]
     try: 
@@ -546,7 +547,7 @@ async def roast(interaction: discord.Interaction, member: discord.Member):
 @bot.tree.command(name="rate", description="Rate someone's vibe (0-100%).")
 async def rate(interaction: discord.Interaction, member: discord.Member):
     await interaction.response.defer()
-    response, _ = await get_combined_response(interaction.user.id, None, prompt_override=f"Rate {member.display_name}'s vibe from 0 to 100%. Be mean.")
+    response, _ = await get_combined_response(interaction.user.id, None, prompt_override=f"Rate {member.display_name}'s vibe from 0 to 100%.")
     await interaction.followup.send(f"{member.mention} {response}")
 
 @bot.tree.command(name="ship", description="Check compatibility between two people.")
