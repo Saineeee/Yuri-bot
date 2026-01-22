@@ -117,6 +117,7 @@ intents.message_content = True
 intents.members = True 
 
 activity = discord.Activity(type=discord.ActivityType.listening, name="to tea ☕ | /help")
+# [UPDATED] Status is set to IDLE (Moon) here
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None, status=discord.Status.idle, activity=activity)
 
 # --- HELPER FUNCTIONS ---
@@ -364,6 +365,7 @@ async def status_loop():
         (discord.ActivityType.listening, "sarcasm.mp3")
     ]
     selected_type, selected_name = random.choice(statuses)
+    # [UPDATED] Added status=discord.Status.idle below to ensure Moon icon stays
     await bot.change_presence(status=discord.Status.idle, activity=discord.Activity(type=selected_type, name=selected_name))
 
 # --- EVENTS ---
@@ -397,20 +399,9 @@ async def on_message(message):
                 if response_text:
                     try: await message.reply(response_text, mention_author=True)
                     except: await message.channel.send(response_text)
-                
-                # [FIX] Send GIF as an Embed so it displays properly
                 if gif_url:
                     if response_text: await asyncio.sleep(0.5)
-                    try:
-                        # Create an Embed
-                        embed = discord.Embed(color=discord.Color.from_rgb(255, 105, 180)) # Hot Pink theme
-                        embed.set_image(url=gif_url)
-                        await message.channel.send(embed=embed)
-                    except Exception as e:
-                        # Fallback if embed permission is missing
-                        print(f"Embed Error: {e}")
-                        await message.channel.send(gif_url)
-
+                    await message.channel.send(gif_url)
         except discord.Forbidden: print(f"Perms Missing in {message.channel.name}.")
         except Exception as e: print(f"Error: {e}")
 
