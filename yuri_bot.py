@@ -9,6 +9,7 @@ import io
 import re
 import datetime
 import urllib.parse 
+import pytz # <--- NEW IMPORT FOR TIMEZONES
 from typing import Literal, Optional
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -24,7 +25,6 @@ load_dotenv()
 # --- API KEYS ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-# TENOR KEY REMOVED (Replaced with Free DuckDuckGo)
 OWNER_ID = os.getenv("OWNER_ID")
 MONGO_URL = os.getenv("MONGO_URL")
 
@@ -35,7 +35,7 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 
 **Core Personality:**
 - **Vibe:** Dramatic, opinionated, high-energy, and confident.
-- **Tone:** Lowercase, minimal punctuation, slang (bruh, fr, lmao,
+- **Tone:** Lowercase, minimal punctuation, slang (bruh, fr, lmao).
 - **Length:** **KEEP IT SHORT.** Real people don't write paragraphs. Use 1-2 sentences max.
 - **Engagement:** Do NOT be a dry texter. Add drama, hot takes, or questions.
 
@@ -137,6 +137,36 @@ async def get_image_from_url(url):
                 return Image.open(io.BytesIO(data))
     return None
 
+# --- NEW: SMART TIMEZONE DETECTION ---
+def get_smart_time(text_input):
+    """
+    Detects language script to guess timezone.
+    Defaults to India (IST) because Railway servers are UTC.
+    """
+    utc_now = datetime.datetime.now(pytz.utc)
+    
+    # 1. Hindi / Bengali / Hinglish Indicators
+    # Checks for Devanagari script range, Bengali script, or common Hinglish words
+    if re.search(r'[\u0900-\u097F]', text_input) or \
+       re.search(r'[\u0980-\u09FF]', text_input) or \
+       any(word in text_input.lower() for word in ["kya", "kab", "hai", "bhai", "samay", "baj", "baje"]):
+        
+        ist = pytz.timezone('Asia/Kolkata')
+        local_time = utc_now.astimezone(ist)
+        return f"{local_time.strftime('%I:%M %p')} (India Time/IST)"
+
+    # 2. Japanese Indicators (Hiragana/Katakana)
+    if re.search(r'[\u3040-\u309F\u30A0-\u30FF]', text_input):
+        jst = pytz.timezone('Asia/Tokyo')
+        local_time = utc_now.astimezone(jst)
+        return f"{local_time.strftime('%I:%M %p')} (Japan Time/JST)"
+
+    # 3. Default: Assume India (IST) for English 
+    # (Because pure UTC confuses users, and most users are likely Indian)
+    ist = pytz.timezone('Asia/Kolkata')
+    local_time = utc_now.astimezone(ist)
+    return f"{local_time.strftime('%A, %B %d, %I:%M %p')} (IST)"
+
 # --- FEATURE: WEB SEARCH (TEXT) ---
 async def search_web(query):
     try:
@@ -206,8 +236,11 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
     
     # 1. Prepare Data
     history_db = await get_chat_history(user_id)
-    now_str = datetime.datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
-    system_data = f"[System: Current Date/Time is {now_str}.]"
+    
+    # --- UPDATED: USE SMART TIME ---
+    # We now pass the user's text to the function so it can guess the language
+    time_str = get_smart_time(text_input if text_input else "")
+    system_data = f"[System: Current Date/Time is {time_str}.]"
     
     # 2. Check for Web Search Triggers
     search_data = ""
@@ -362,14 +395,14 @@ async def wipe_all(ctx):
 @commands.is_owner()
 async def spy(ctx):
     """(Owner Only) List all users sorted by ID."""
-    status_msg = await ctx.send(" Accessing database... (This might take a moment)")
+    status_msg = await ctx.send("🕵️ Accessing database... (This might take a moment)")
     user_ids = await chat_collection.distinct("user_id")
     if not user_ids:
-        await ctx.send(" No users found.")
+        await ctx.send("🕵️ No users found.")
         return
     user_ids.sort()
     spy_list = "==================================================\n"
-    spy_list += "  YURI'S SURVEILLANCE LIST\n"
+    spy_list += "🕵️  YURI'S SURVEILLANCE LIST\n"
     spy_list += "==================================================\n\n"
     spy_list += f"{'ID':<22} | {'USERNAME'}\n"
     spy_list += "-" * 50 + "\n"
