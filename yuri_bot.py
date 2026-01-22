@@ -9,7 +9,7 @@ import io
 import re
 import datetime
 import urllib.parse 
-import pytz # <--- NEW IMPORT FOR TIMEZONES
+import pytz 
 from typing import Literal, Optional
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -59,7 +59,8 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 - **MATCH LANGUAGE:** Reply in the exact language the user speaks.
 - **MAINTAIN VIBE:** Keep the Gen Z personality in all languages.
 
-**🔔 CONTEXT:**
+**🔔 CONTEXT & TOOLS:**
+- **⏰ TIME/DATE:** You have access to the current time. **DO NOT** mention it unless the user explicitly asks "what time is it" or "what day is it". If they just say "hi", do NOT say "It is Monday".
 - **Internet:** If you find search results (News/Weather), use them but keep the slang tone.
 """
 
@@ -137,7 +138,7 @@ async def get_image_from_url(url):
                 return Image.open(io.BytesIO(data))
     return None
 
-# --- NEW: SMART TIMEZONE DETECTION ---
+# --- SMART TIMEZONE DETECTION ---
 def get_smart_time(text_input):
     """
     Detects language script to guess timezone.
@@ -146,7 +147,6 @@ def get_smart_time(text_input):
     utc_now = datetime.datetime.now(pytz.utc)
     
     # 1. Hindi / Bengali / Hinglish Indicators
-    # Checks for Devanagari script range, Bengali script, or common Hinglish words
     if re.search(r'[\u0900-\u097F]', text_input) or \
        re.search(r'[\u0980-\u09FF]', text_input) or \
        any(word in text_input.lower() for word in ["kya", "kab", "hai", "bhai", "samay", "baj", "baje"]):
@@ -161,8 +161,7 @@ def get_smart_time(text_input):
         local_time = utc_now.astimezone(jst)
         return f"{local_time.strftime('%I:%M %p')} (Japan Time/JST)"
 
-    # 3. Default: Assume India (IST) for English 
-    # (Because pure UTC confuses users, and most users are likely Indian)
+    # 3. Default: Assume India (IST)
     ist = pytz.timezone('Asia/Kolkata')
     local_time = utc_now.astimezone(ist)
     return f"{local_time.strftime('%A, %B %d, %I:%M %p')} (IST)"
@@ -184,7 +183,6 @@ async def search_web(query):
 async def search_gif_ddg(query):
     """Searches DuckDuckGo for GIFs (No Key Needed)."""
     try:
-        # We use 'type_image=gif' to filter for GIFs
         results = await asyncio.to_thread(lambda: list(DDGS().images(
             keywords=query, 
             type_image='gif', 
@@ -237,8 +235,7 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
     # 1. Prepare Data
     history_db = await get_chat_history(user_id)
     
-    # --- UPDATED: USE SMART TIME ---
-    # We now pass the user's text to the function so it can guess the language
+    # --- USE SMART TIME ---
     time_str = get_smart_time(text_input if text_input else "")
     system_data = f"[System: Current Date/Time is {time_str}.]"
     
@@ -313,7 +310,6 @@ async def get_combined_response(user_id, text_input, image_input=None, prompt_ov
 
 @bot.event
 async def on_message(message):
-    # Ignore self
     if message.author == bot.user: return
     
     # 1. CHECK IF MENTIONED (PINGED)
