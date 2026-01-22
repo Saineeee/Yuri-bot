@@ -117,6 +117,7 @@ intents.message_content = True
 intents.members = True 
 
 activity = discord.Activity(type=discord.ActivityType.listening, name="to tea ☕ | /help")
+# [UPDATED] Status is set to IDLE (Moon) here
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None, status=discord.Status.idle, activity=activity)
 
 # --- HELPER FUNCTIONS ---
@@ -364,7 +365,8 @@ async def status_loop():
         (discord.ActivityType.listening, "sarcasm.mp3")
     ]
     selected_type, selected_name = random.choice(statuses)
-    await bot.change_presence(activity=discord.Activity(type=selected_type, name=selected_name))
+    # [UPDATED] Added status=discord.Status.idle below to ensure Moon icon stays
+    await bot.change_presence(status=discord.Status.idle, activity=discord.Activity(type=selected_type, name=selected_name))
 
 # --- EVENTS ---
 @bot.event
@@ -748,4 +750,3 @@ async def help_command(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 bot.run(os.getenv('DISCORD_TOKEN'))
-
