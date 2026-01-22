@@ -690,13 +690,62 @@ async def wipe_slash(interaction: discord.Interaction, member: Optional[discord.
     await clear_user_history(member.id)
     await interaction.followup.send(f"✅ **Admin Action:** Wiped memory for {member.display_name}.")
 
-@bot.tree.command(name="help", description="✨ See Yuri's chaos menu.")
+@bot.tree.command(name="help", description="✨ See Yuri's command menu.")
 async def help_command(interaction: discord.Interaction):
-    embed = discord.Embed(title="✨ YURI'S MENU", description="Here are few things i can do:", color=discord.Color.from_rgb(255, 105, 180))
-    embed.add_field(name="🔥 **CHAOS & DRAMA**", value="`/roast @user` - DESTROY them.\n`/rate @user` - Judge their vibe.\n`/rename @user` - Gives a cursed nickname.", inline=False)
-    embed.add_field(name="❤️ **LOVE & SECRETS**", value="`/confess [msg]` - Anon confession.\n`/crush @user` - Secret match!\n`/ship @user` - Visual compatibility test.", inline=False)
-    embed.add_field(name="🧠 **BRAIN**", value="`/ask [question]` - Ask anything. I have internet access.", inline=False)
+    embed = discord.Embed(
+        title="✨ YURI'S MENU",
+        description="\nHere is what I can do:",
+        color=discord.Color.from_rgb(255, 105, 180) # Hot Pink
+    )
+    
+    # --- JUDGMENT COMMANDS ---
+    embed.add_field(
+        name="👀 **JUDGMENT**", 
+        value=(
+            "`/roast @user` - Absolutely destroy someone's ego.\n"
+            "`/rate @user` - I judge their vibe (0-100%).\n"
+            "`/ship @user` - Check compatibility between two people."
+        ), 
+        inline=False
+    )
+    
+    # --- SOCIAL & FUN ---
+    embed.add_field(
+        name="🔥 **DRAMA & CHAOS**", 
+        value=(
+            "`/rename @user` - Give someone a cursed nickname.\n"
+            "`/truth` - Get a spicy Truth question.\n"
+            "`/dare` - Get a chaotic Dare.\n"
+            "`/confess [msg]` - Send an anonymous confession.\n"
+            "`/crush @user` - Secretly match! If they pick you too, I DM both."
+        ), 
+        inline=False
+    )
+    
+    # --- UTILITY ---
+    embed.add_field(
+        name="🧠 **BRAIN**", 
+        value=(
+            "`/ask [question]` - Ask me anything (I have Internet access).\n"
+            "`/feedback` - Report a bug or suggest a feature to add.\n"
+            "`/wipe` - Make me forget our conversation history."
+        ), 
+        inline=False
+    )
+    
+     # --- ADMIN ONLY ---
+    embed.add_field(
+        name="🪽️ **ADMIN ONLY**", 
+        value=(
+            "`/setup [channel]` - Set where confessions appear.\n"
+            "`/grudge @user` - Make me hate someone permanently.\n"
+            "`/ungrudge @user` - Forgive a user."
+        ), 
+        inline=False
+    )
+
     embed.set_footer(text="Developed by @sainnee | Contact him via /feedback!")
     await interaction.response.send_message(embed=embed)
 
 bot.run(os.getenv('DISCORD_TOKEN'))
+
