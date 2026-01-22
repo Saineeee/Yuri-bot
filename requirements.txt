@@ -3,7 +3,8 @@ python-dotenv
 google-generativeai
 motor
 dnspython
-pillow
 groq
 duckduckgo-search
 pytz
+pillow
+aiohttp
