@@ -729,7 +729,6 @@ async def help_command(interaction: discord.Interaction):
         name="🧠 **BRAIN**", 
         value=(
             "`/ask [question]` - Ask me anything (I have Internet access).\n"
-            "`/feedback` - Report a bug or suggest a feature to add.\n"
             "`/wipe` - Make me forget our conversation history."
         ), 
         inline=False
@@ -746,7 +745,7 @@ async def help_command(interaction: discord.Interaction):
         inline=False
     )
 
-    embed.set_footer(text="Developed by @sainnee | Contact him via /feedback!")
+    embed.set_footer(text="| for bug report use /feedback!")
     await interaction.response.send_message(embed=embed)
 
 bot.run(os.getenv('DISCORD_TOKEN'))
