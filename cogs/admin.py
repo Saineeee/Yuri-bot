@@ -42,6 +42,12 @@ class Admin(commands.Cog):
         await self.bot.chat_collection.delete_many({"user_id": member.id})
         await interaction.followup.send(f"✅ Wiped memory for {member.display_name}.")
 
+    @commands.command(name="wipeall")
+    @commands.is_owner()
+    async def wipe_all(self, ctx):
+        await self.bot.chat_collection.delete_many({})
+        await ctx.send("⚠️ **SYSTEM PURGE:** I have forgotten EVERYONE. Database cleared.")
+
     @commands.command()
     @commands.is_owner()
     async def spy(self, ctx):
@@ -59,6 +65,37 @@ class Admin(commands.Cog):
         
         if not log: return await ctx.send("No Data.")
         await ctx.send(file=discord.File(io.BytesIO(log.encode()), filename=f"log_{user_id}.txt"))
+
+    @commands.command()
+    @commands.is_owner()
+    async def spyrecent(self, ctx):
+        now = datetime.datetime.utcnow()
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        cursor = self.bot.chat_collection.find({"timestamp": {"$gte": start}}).sort("timestamp", 1)
+        
+        log = f"DAILY LOG: {start.date()}\n" + "="*40 + "\n"
+        count = 0
+        async for doc in cursor:
+            name = doc['user_id'] # Simplified for speed
+            msg = str(doc['parts'][0]).replace('\n', ' ')
+            log += f"[{doc['timestamp'].strftime('%H:%M')}] {name}: {msg[:50]}\n"
+            count += 1
+            
+        if count == 0: return await ctx.send("❌ No logs today.")
+        await ctx.send(f"Found {count} messages.", file=discord.File(io.BytesIO(log.encode()), filename="daily_log.txt"))
+
+    @commands.command()
+    @commands.is_owner()
+    async def inbox(self, ctx):
+        cursor = self.bot.feedback_collection.find({}).sort("timestamp", -1)
+        log = "INBOX\n" + "="*30 + "\n"
+        count = 0
+        async for doc in cursor:
+            log += f"[{doc['category'].upper()}] {doc['username']}: {doc['message']}\n"
+            count += 1
+        
+        if count == 0: return await ctx.send("📭 Empty.")
+        await ctx.send(f"📬 {count} items.", file=discord.File(io.BytesIO(log.encode()), filename="inbox.txt"))
 
 async def setup(bot):
     await bot.add_cog(Admin(bot))
