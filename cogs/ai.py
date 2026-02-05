@@ -10,7 +10,6 @@ from groq import AsyncGroq
 import utils
 
 # --- CONFIG ---
-# [RESTORED FULL PERSONALITY PROMPT]
 SYSTEM_PROMPT = """
 You are **Yuri**, a teenage girl in a Discord chat server.
 You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
@@ -63,6 +62,7 @@ class AI(commands.Cog):
         genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
         self.groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
         
+        # Uncensored
         self.safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -192,14 +192,14 @@ class AI(commands.Cog):
                     img_data = None
                     voice_text = ""
 
-                    # Loop through all attachments
+                    # Loop through all attachments for Multimodal support
                     for att in message.attachments:
                         filename = att.filename.lower()
                         # Image Handling
                         if not img_data and any(filename.endswith(x) for x in ['png', 'jpg', 'jpeg', 'webp']):
                             img_data = await utils.get_image_from_url(att.url)
                         
-                        # Audio Handling
+                        # Audio Handling (STT)
                         elif not voice_text and any(filename.endswith(x) for x in ['ogg', 'mp3', 'wav', 'm4a']):
                             file_bytes = await att.read()
                             transcribed = await self.transcribe_audio(file_bytes, filename)
@@ -244,4 +244,3 @@ class AI(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(AI(bot))
-    
