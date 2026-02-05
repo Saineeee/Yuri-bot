@@ -1,1 +1,1 @@
-worker: python yuri_bot.py
+worker: python main.py
