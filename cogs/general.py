@@ -36,7 +36,8 @@ class General(commands.Cog):
             color=discord.Color.from_rgb(255, 105, 180)
         )
         embed.add_field(name="👀 **JUDGMENT**", value="`/roast` `/rate` `/ship`", inline=False)
-        embed.add_field(name="🔥 **DRAMA**", value="`/rename` `/confess` `/ask`", inline=False)
+        embed.add_field(name="🔥 **DRAMA**", value="`/rename` `/confess` `/crush` `/truth` `/dare`", inline=False)
+        embed.add_field(name="🧠 **BRAIN**", value="`/ask` `/wipe`\n*I can also see images and hear voice notes!*", inline=False)
         embed.set_footer(text="Use /feedback for bugs!")
         await interaction.response.send_message(embed=embed)
 
