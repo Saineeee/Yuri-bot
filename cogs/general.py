@@ -32,13 +32,56 @@ class General(commands.Cog):
     async def help_command(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="✨ YURI'S MENU",
-            description="I judge you based on your chat history now.",
-            color=discord.Color.from_rgb(255, 105, 180)
+            description="\nHere is what I can do:",
+            color=discord.Color.from_rgb(255, 105, 180) # Hot Pink
         )
-        embed.add_field(name="👀 **JUDGMENT**", value="`/roast` `/rate` `/ship`", inline=False)
-        embed.add_field(name="🔥 **DRAMA**", value="`/rename` `/confess` `/crush` `/truth` `/dare`", inline=False)
-        embed.add_field(name="🧠 **BRAIN**", value="`/ask` `/wipe`\n*I can also see images and hear voice notes!*", inline=False)
-        embed.set_footer(text="Use /feedback for bugs!")
+        
+        # --- JUDGMENT COMMANDS ---
+        embed.add_field(
+            name="👀 **JUDGMENT**", 
+            value=(
+                "`/roast @user` - Absolutely destroy someone's ego.\n"
+                "`/rate @user` - I judge their vibe (0-100%).\n"
+                "`/ship @user` - Check compatibility between two people."
+            ), 
+            inline=False
+        )
+        
+        # --- SOCIAL & FUN ---
+        embed.add_field(
+            name="🔥 **DRAMA & CHAOS**", 
+            value=(
+                "`/rename @user` - Give someone a cursed nickname.\n"
+                "`/truth` - Get a spicy Truth question.\n"
+                "`/dare` - Get a chaotic Dare.\n"
+                "`/confess [msg]` - Send an anonymous confession.\n"
+                "`/crush @user` - Secretly match! If they pick you too, I DM both."
+            ), 
+            inline=False
+        )
+        
+        # --- UTILITY ---
+        embed.add_field(
+            name="🧠 **BRAIN**", 
+            value=(
+                "`/ask [question]` - Ask me anything (I have Internet access).\n"
+                "`/wipe` - Make me forget our conversation history."
+            ), 
+            inline=False
+        )
+        
+         # --- ADMIN ONLY ---
+        embed.add_field(
+            name="🪽️ **ADMIN ONLY**", 
+            value=(
+                "`/setup [channel]` - Set where confessions appear.\n"
+                "`/grudge @user` - Make me hate someone permanently.\n"
+                "`/ungrudge @user` - Forgive a user."
+            ), 
+            inline=False
+        )
+
+        embed.set_footer(text="| for bug report use /feedback!")
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="feedback", description="Report bugs/features.")
@@ -52,7 +95,12 @@ class General(commands.Cog):
             "message": message,
             "timestamp": datetime.datetime.utcnow()
         })
-        await interaction.followup.send("✅ Sent!")
+        
+        response = "ok sent."
+        if category.value == "bug": response = "👾 **Bug Reported.** Thanks for reporting, We will look after it."
+        elif category.value == "feature": response = "✨ **Suggestion Sent.** We will see what we can do."
+        
+        await interaction.followup.send(response)
 
 async def setup(bot):
     await bot.add_cog(General(bot))
