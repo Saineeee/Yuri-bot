@@ -58,37 +58,65 @@ class AI(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         
-        # API Setup
+        # --- GEMINI SETUP ---
         genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        self.groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-        
-        # Uncensored
         self.safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
         }
-        
         self.model_1 = genai.GenerativeModel("gemini-1.5-flash", safety_settings=self.safety_settings, system_instruction=SYSTEM_PROMPT)
         self.model_2 = genai.GenerativeModel("gemini-2.0-flash", safety_settings=self.safety_settings, system_instruction=SYSTEM_PROMPT)
         
+        # --- GROQ MULTI-KEY SETUP ---
+        self.groq_keys = []
+        # Load primary key
+        if os.getenv("GROQ_API_KEY"): self.groq_keys.append(os.getenv("GROQ_API_KEY"))
+        # Load backup keys (GROQ_API_KEY_2, GROQ_API_KEY_3, etc.)
+        i = 2
+        while os.getenv(f"GROQ_API_KEY_{i}"):
+            self.groq_keys.append(os.getenv(f"GROQ_API_KEY_{i}"))
+            i += 1
+            
+        self.current_groq_index = 0
+        if self.groq_keys:
+            self.groq_client = AsyncGroq(api_key=self.groq_keys[0])
+            print(f"✅ Loaded {len(self.groq_keys)} Groq API Keys.")
+        else:
+            self.groq_client = None
+            print("❌ No Groq Keys Found!")
+
         self.cooldowns = {1: None, 2: None}
         self.fail_counts = {1: 0, 2: 0}
 
+    async def _rotate_groq_key(self):
+        """Switches to the next available Groq API Key."""
+        if len(self.groq_keys) <= 1: return False # No backup keys
+        
+        self.current_groq_index = (self.current_groq_index + 1) % len(self.groq_keys)
+        new_key = self.groq_keys[self.current_groq_index]
+        self.groq_client = AsyncGroq(api_key=new_key)
+        print(f"🔄 Switched to Groq Key #{self.current_groq_index + 1}")
+        return True
+
     async def transcribe_audio(self, file_bytes, filename):
-        """Uses Groq Whisper to transcribe audio to text."""
-        try:
-            audio_file = (filename, file_bytes)
-            transcription = await self.groq_client.audio.transcriptions.create(
-                file=audio_file,
-                model="whisper-large-v3",
-                response_format="json"
-            )
-            return transcription.text
-        except Exception as e:
-            print(f"STT Error: {e}")
-            return None
+        """Uses Groq Whisper to transcribe audio (With Retry Logic)."""
+        if not self.groq_client: return None
+        
+        for _ in range(len(self.groq_keys) + 1): # Try current, then iterate backups
+            try:
+                audio_file = (filename, file_bytes)
+                transcription = await self.groq_client.audio.transcriptions.create(
+                    file=audio_file,
+                    model="whisper-large-v3",
+                    response_format="json"
+                )
+                return transcription.text
+            except Exception as e:
+                print(f"STT Error (Key #{self.current_groq_index + 1}): {e}")
+                if not await self._rotate_groq_key(): break # Stop if no more keys
+        return None
 
     async def get_combined_response(self, user_id, text_input, image_input=None, prompt_override=None):
         # 1. Grudge Check
@@ -119,12 +147,11 @@ class AI(commands.Cog):
             if text_input: current_text += text_input
             if image_input: current_text += " (User sent an image. Roast it or comment on it.)"
 
-        # 5. Generation Loop
+        # 5. Generation Loop (Gemini Layers)
         response_text = ""
         successful = False
         now = datetime.datetime.now()
         
-        # Reset cooldowns
         for layer in self.cooldowns:
             if self.cooldowns[layer] and now > self.cooldowns[layer]: self.cooldowns[layer] = None
 
@@ -147,7 +174,7 @@ class AI(commands.Cog):
                     wait = datetime.timedelta(minutes=1) if self.fail_counts[layer] < 2 else datetime.timedelta(hours=24)
                     self.cooldowns[layer] = now + wait
 
-        # 6. Fallback (Groq)
+        # 6. Fallback (Groq Multi-Key Rotation)
         if not successful:
             response_text = await self.call_groq_fallback(history_db, SYSTEM_PROMPT, current_text, image_input)
 
@@ -164,23 +191,43 @@ class AI(commands.Cog):
         return clean_text, gif_url
 
     async def call_groq_fallback(self, history, sys_prompt, msg, img=None):
+        """Tries Groq (70B -> 8B -> Rotate Key -> Retry)."""
+        if not self.groq_client: return "Server dead rn. Try later."
+
         messages = [{"role": "system", "content": sys_prompt}]
         for m in history:
             role = "assistant" if m['role'] == "model" else "user"
             content = m['parts'][0]
             if isinstance(content, str): messages.append({"role": role, "content": content})
-            
         messages.append({"role": "user", "content": msg})
-        try:
-            comp = await self.groq_client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages, max_tokens=256)
-            return comp.choices[0].message.content
-        except:
-            return "Server dead rn. Try later."
+
+        # Retry Loop for Key Rotation
+        for _ in range(len(self.groq_keys) + 1):
+            try:
+                # 1. Try Big Model (70B) or Vision (11B)
+                model = "llama-3.2-11b-vision-preview" if img else "llama-3.3-70b-versatile"
+                comp = await self.groq_client.chat.completions.create(model=model, messages=messages, max_tokens=256)
+                return comp.choices[0].message.content
+            except Exception as e:
+                print(f"Groq 70B Failed (Key {self.current_groq_index + 1}): {e}")
+                
+                # 2. Try Small Model (8B) - Only if NOT an image (8B is text only)
+                if not img:
+                    try:
+                        comp = await self.groq_client.chat.completions.create(model="llama-3.1-8b-instant", messages=messages, max_tokens=256)
+                        return comp.choices[0].message.content
+                    except Exception as e2:
+                        print(f"Groq 8B Failed (Key {self.current_groq_index + 1}): {e2}")
+
+                # 3. If both fail, ROTATE KEY and try loop again
+                if not await self._rotate_groq_key():
+                    break # Stop if we ran out of keys
+
+        return "The AI is **down** rn, wait for about **12 hours** (Rate Limits reached)."
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        if message.author == self.bot.user or message.content.startswith(self.bot.command_prefix):
-            return
+        if message.author == self.bot.user or message.content.startswith(self.bot.command_prefix): return
 
         is_reply = (message.reference and message.reference.resolved and message.reference.resolved.author == self.bot.user)
         
@@ -192,23 +239,17 @@ class AI(commands.Cog):
                     img_data = None
                     voice_text = ""
 
-                    # Loop through all attachments for Multimodal support
                     for att in message.attachments:
                         filename = att.filename.lower()
-                        # Image Handling
                         if not img_data and any(filename.endswith(x) for x in ['png', 'jpg', 'jpeg', 'webp']):
                             img_data = await utils.get_image_from_url(att.url)
-                        
-                        # Audio Handling (STT)
                         elif not voice_text and any(filename.endswith(x) for x in ['ogg', 'mp3', 'wav', 'm4a']):
                             file_bytes = await att.read()
                             transcribed = await self.transcribe_audio(file_bytes, filename)
-                            if transcribed:
-                                voice_text = f"\n[User Voice Note]: \"{transcribed}\""
+                            if transcribed: voice_text = f"\n[User Voice Note]: \"{transcribed}\""
 
                     final_text = clean_text + voice_text
-                    if not final_text.strip() and not img_data:
-                        return
+                    if not final_text.strip() and not img_data: return
 
                     resp_text, gif_url = await self.get_combined_response(user_id, final_text, img_data)
 
