@@ -4,7 +4,7 @@ from discord import app_commands
 import os
 import io
 import datetime
-import base64 # [FIX] Required for Groq Image Fallback
+import base64  # [CRITICAL FIX] Required for image fallback
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from groq import AsyncGroq
@@ -40,7 +40,7 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
    - If the user is chill, be their chaotic bestie.
 
 4. **🔥 PROXY ROASTING:**
-   - If a user asks you to roast SOMEONE ELSE, do it instantly, and roast him as harshly as possible.
+   - If a user asks to roast SOMEONE ELSE, do it instantly, and roast him as harshly as possible.
 
 **📸 GIF REACTION RULE:**
 - Tag: `[GIF: search query]` (e.g., `[GIF: anime girl smug]`, `[GIF: tohru dragon maid happy]`).
@@ -72,7 +72,9 @@ class AI(commands.Cog):
         
         # --- GROQ MULTI-KEY SETUP ---
         self.groq_keys = []
+        # Load primary key
         if os.getenv("GROQ_API_KEY"): self.groq_keys.append(os.getenv("GROQ_API_KEY"))
+        # Load backup keys (GROQ_API_KEY_2, GROQ_API_KEY_3, etc.)
         i = 2
         while os.getenv(f"GROQ_API_KEY_{i}"):
             self.groq_keys.append(os.getenv(f"GROQ_API_KEY_{i}"))
@@ -91,7 +93,8 @@ class AI(commands.Cog):
 
     async def _rotate_groq_key(self):
         """Switches to the next available Groq API Key."""
-        if len(self.groq_keys) <= 1: return False 
+        if len(self.groq_keys) <= 1: return False # No backup keys
+        
         self.current_groq_index = (self.current_groq_index + 1) % len(self.groq_keys)
         new_key = self.groq_keys[self.current_groq_index]
         self.groq_client = AsyncGroq(api_key=new_key)
@@ -99,8 +102,10 @@ class AI(commands.Cog):
         return True
 
     async def transcribe_audio(self, file_bytes, filename):
+        """Uses Groq Whisper to transcribe audio (With Retry Logic)."""
         if not self.groq_client: return None
-        for _ in range(len(self.groq_keys) + 1): 
+        
+        for _ in range(len(self.groq_keys) + 1): # Try current, then iterate backups
             try:
                 audio_file = (filename, file_bytes)
                 transcription = await self.groq_client.audio.transcriptions.create(
@@ -111,17 +116,18 @@ class AI(commands.Cog):
                 return transcription.text
             except Exception as e:
                 print(f"STT Error (Key #{self.current_groq_index + 1}): {e}")
-                if not await self._rotate_groq_key(): break 
+                if not await self._rotate_groq_key(): break # Stop if no more keys
         return None
 
     async def get_combined_response(self, user_id, text_input, image_input=None, prompt_override=None):
         # [FIX] Force RGB to prevent RGBA 400 Errors and ensure data is loaded
         if image_input:
             try:
-                image_input = image_input.convert("RGB")
+                if image_input.mode != 'RGB':
+                    image_input = image_input.convert("RGB")
             except Exception as e:
                 print(f"Image Conversion Error: {e}")
-                image_input = None # Drop broken image
+                image_input = None # Drop broken image to prevent crash
 
         # 1. Grudge Check
         is_grudged = await self.bot.grudge_collection.find_one({"user_id": user_id})
@@ -167,7 +173,7 @@ class AI(commands.Cog):
                 try:
                     gemini_history = history_db + [{"role": "user", "parts": [current_text]}]
                     
-                    # [FIX] Use copy to prevent stream exhaustion
+                    # [FIX] Use copy() to prevent stream exhaustion for the backup model
                     if image_input: 
                         gemini_history[-1]["parts"].append(image_input.copy())
                     
@@ -211,8 +217,10 @@ class AI(commands.Cog):
         content_payload = msg
         if img:
             try:
-                # Encode Image to Base64
+                # Ensure RGB
                 if img.mode != 'RGB': img = img.convert("RGB")
+                
+                # Encode Image to Base64
                 buffered = io.BytesIO()
                 img.save(buffered, format="JPEG")
                 img_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
