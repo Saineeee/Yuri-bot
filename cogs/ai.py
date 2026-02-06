@@ -4,7 +4,6 @@ from discord import app_commands
 import os
 import io
 import datetime
-import base64 
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from groq import AsyncGroq
@@ -120,15 +119,6 @@ class AI(commands.Cog):
         return None
 
     async def get_combined_response(self, user_id, text_input, image_input=None, prompt_override=None):
-        # [FIX] Force RGB to prevent RGBA 400 Errors and ensure data is loaded
-        if image_input:
-            try:
-                if image_input.mode != 'RGB':
-                    image_input = image_input.convert("RGB")
-            except Exception as e:
-                print(f"Image Conversion Error: {e}")
-                image_input = None # Drop broken image
-
         # 1. Grudge Check
         is_grudged = await self.bot.grudge_collection.find_one({"user_id": user_id})
         grudge_prompt = "\n[SYSTEM: You hold a grudge against this user. Be cold/dismissive.]" if is_grudged else ""
@@ -172,10 +162,7 @@ class AI(commands.Cog):
             if not self.cooldowns[layer]:
                 try:
                     gemini_history = history_db + [{"role": "user", "parts": [current_text]}]
-                    
-                    # [FIX] Use copy to prevent stream exhaustion
-                    if image_input: 
-                        gemini_history[-1]["parts"].append(image_input.copy())
+                    if image_input: gemini_history[-1]["parts"].append(image_input)
                     
                     response = await model.generate_content_async(gemini_history)
                     response_text = response.text
@@ -189,7 +176,6 @@ class AI(commands.Cog):
 
         # 6. Fallback (Groq Multi-Key Rotation)
         if not successful:
-            print("⚠️ Switching to Groq Fallback...")
             response_text = await self.call_groq_fallback(history_db, SYSTEM_PROMPT, current_text, image_input)
 
         # 7. Process & Save
@@ -205,7 +191,7 @@ class AI(commands.Cog):
         return clean_text, gif_url
 
     async def call_groq_fallback(self, history, sys_prompt, msg, img=None):
-        """Tries Groq (70B -> 8B -> Rotate Key -> Retry). Now Supports Images."""
+        """Tries Groq (70B -> 8B -> Rotate Key -> Retry)."""
         if not self.groq_client: return "Server dead rn. Try later."
 
         messages = [{"role": "system", "content": sys_prompt}]
@@ -213,44 +199,19 @@ class AI(commands.Cog):
             role = "assistant" if m['role'] == "model" else "user"
             content = m['parts'][0]
             if isinstance(content, str): messages.append({"role": role, "content": content})
-        
-        # [FIX] Handle Image for Groq (Llama 3.2 Vision)
-        content_payload = msg
-        if img:
-            try:
-                # 1. Resize if too big (Max 1024px) - Prevents Payload Too Large
-                img.thumbnail((1024, 1024))
-                
-                # 2. Ensure RGB
-                if img.mode != 'RGB': img = img.convert("RGB")
-                
-                # 3. Encode to Base64
-                buffered = io.BytesIO()
-                img.save(buffered, format="JPEG", quality=85) # Compression to save data
-                img_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-                
-                # 4. Construct Vision Payload
-                content_payload = [
-                    {"type": "text", "text": msg},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-                ]
-            except Exception as e:
-                print(f"❌ Groq Image Processing Failed: {e}")
-                content_payload = msg + " [System: User sent an image, but it failed to upload. Roast them for sending a broken file.]"
-
-        messages.append({"role": "user", "content": content_payload})
+        messages.append({"role": "user", "content": msg})
 
         # Retry Loop for Key Rotation
         for _ in range(len(self.groq_keys) + 1):
             try:
-                # 1. Try Vision (11B) or Big Model (70B)
+                # 1. Try Big Model (70B) or Vision (11B)
                 model = "llama-3.2-11b-vision-preview" if img else "llama-3.3-70b-versatile"
                 comp = await self.groq_client.chat.completions.create(model=model, messages=messages, max_tokens=256)
                 return comp.choices[0].message.content
             except Exception as e:
-                print(f"Groq Vision/70B Failed (Key {self.current_groq_index + 1}): {e}")
+                print(f"Groq 70B Failed (Key {self.current_groq_index + 1}): {e}")
                 
-                # 2. Try Small Model (8B) - Text Only Fallback (If vision fails)
+                # 2. Try Small Model (8B) - Only if NOT an image (8B is text only)
                 if not img:
                     try:
                         comp = await self.groq_client.chat.completions.create(model="llama-3.1-8b-instant", messages=messages, max_tokens=256)
@@ -260,7 +221,7 @@ class AI(commands.Cog):
 
                 # 3. If both fail, ROTATE KEY and try loop again
                 if not await self._rotate_groq_key():
-                    break 
+                    break # Stop if we ran out of keys
 
         return "The AI is **down** rn, wait for about **12 hours** (Rate Limits reached)."
 
@@ -298,7 +259,7 @@ class AI(commands.Cog):
                         embed.set_image(url=gif_url)
                         await message.channel.send(embed=embed)
             except Exception as e:
-                print(f"Main Error: {e}")
+                print(f"Error: {e}")
 
     @app_commands.command(name="ask", description="Ask Yuri a Yes/No question.")
     async def ask(self, interaction: discord.Interaction, question: str):
