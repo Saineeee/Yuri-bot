@@ -4,6 +4,7 @@ from discord import app_commands
 import os
 import io
 import datetime
+import base64  # <--- ADDED THIS IMPORT
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from groq import AsyncGroq
@@ -191,7 +192,7 @@ class AI(commands.Cog):
         return clean_text, gif_url
 
     async def call_groq_fallback(self, history, sys_prompt, msg, img=None):
-        """Tries Groq (70B -> 8B -> Rotate Key -> Retry)."""
+        """Tries Groq (70B -> 8B -> Rotate Key -> Retry). Now supports IMAGES."""
         if not self.groq_client: return "Server dead rn. Try later."
 
         messages = [{"role": "system", "content": sys_prompt}]
@@ -199,7 +200,28 @@ class AI(commands.Cog):
             role = "assistant" if m['role'] == "model" else "user"
             content = m['parts'][0]
             if isinstance(content, str): messages.append({"role": role, "content": content})
-        messages.append({"role": "user", "content": msg})
+        
+        # --- FIXED IMAGE HANDLING ---
+        content_payload = msg
+        if img:
+            try:
+                # Convert PIL Image to Base64
+                if img.mode in ("RGBA", "P"): img = img.convert("RGB") # Remove transparency for JPEG
+                buffered = io.BytesIO()
+                img.save(buffered, format="JPEG")
+                img_b64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+                
+                # Format for Llama 3.2 Vision
+                content_payload = [
+                    {"type": "text", "text": msg},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+                ]
+            except Exception as e:
+                print(f"Image Encode Error: {e}")
+                # Fallback to text only if encoding fails
+                content_payload = msg + " [System: Image upload failed]"
+
+        messages.append({"role": "user", "content": content_payload})
 
         # Retry Loop for Key Rotation
         for _ in range(len(self.groq_keys) + 1):
@@ -209,7 +231,7 @@ class AI(commands.Cog):
                 comp = await self.groq_client.chat.completions.create(model=model, messages=messages, max_tokens=256)
                 return comp.choices[0].message.content
             except Exception as e:
-                print(f"Groq 70B Failed (Key {self.current_groq_index + 1}): {e}")
+                print(f"Groq 70B/Vision Failed (Key {self.current_groq_index + 1}): {e}")
                 
                 # 2. Try Small Model (8B) - Only if NOT an image (8B is text only)
                 if not img:
