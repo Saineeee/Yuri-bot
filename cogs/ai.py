@@ -124,7 +124,7 @@ class AI(commands.Cog):
         grudge_prompt = "\n[SYSTEM: You hold a grudge against this user. Be cold/dismissive.]" if is_grudged else ""
 
         # 2. History & Time
-        cursor = self.bot.chat_collection.find({"user_id": user_id}).sort("timestamp", 1).limit(50)
+        cursor = self.bot.chat_collection.find({"user_id": user_id}).sort("timestamp", 1).limit(25)
         history_db = [{"role": doc["role"], "parts": doc["parts"]} async for doc in cursor]
         
         time_str = utils.get_smart_time(text_input if text_input else "")
