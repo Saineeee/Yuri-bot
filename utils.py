@@ -14,27 +14,48 @@ async def get_image_from_url(url):
     """Downloads image with size limit (8MB) to prevent crashes."""
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
+            async with session.get(url, timeout=10) as resp:
                 if resp.status == 200:
-                    if int(resp.headers.get('Content-Length', 0)) > 8 * 1024 * 1024:
+                    # Check content length if available
+                    content_length = resp.headers.get('Content-Length')
+                    if content_length and int(content_length) > 8 * 1024 * 1024:
                         return None
-                    data = await resp.read()
+
+                    # Read data in chunks to prevent memory issues for large responses without Content-Length
+                    data = b""
+                    async for chunk in resp.content.iter_chunked(1024):
+                        data += chunk
+                        if len(data) > 8 * 1024 * 1024:
+                            return None
+
                     return Image.open(io.BytesIO(data))
-    except:
+    except Exception as e:
+        print(f"Image Download Error: {e}")
         return None
     return None
 
 def stitch_images(img1_data, img2_data):
     """Combines two PIL images side-by-side."""
     try:
+        # Compatibility for older Pillow versions
+        resample_filter = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
         base_height = 512
+
+        if not img1_data or not img2_data:
+            single_img = img1_data or img2_data
+            if not single_img: return None
+            # Normalize single image height
+            ratio = base_height / float(single_img.size[1])
+            w = int((float(single_img.size[0]) * float(ratio)))
+            return single_img.resize((w, base_height), resample_filter)
+
         ratio1 = base_height / float(img1_data.size[1])
         w1 = int((float(img1_data.size[0]) * float(ratio1)))
-        img1 = img1_data.resize((w1, base_height), Image.Resampling.LANCZOS)
+        img1 = img1_data.resize((w1, base_height), resample_filter)
         
         ratio2 = base_height / float(img2_data.size[1])
         w2 = int((float(img2_data.size[0]) * float(ratio2)))
-        img2 = img2_data.resize((w2, base_height), Image.Resampling.LANCZOS)
+        img2 = img2_data.resize((w2, base_height), resample_filter)
 
         total_width = w1 + w2
         new_im = Image.new('RGB', (total_width, base_height))

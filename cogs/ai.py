@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import os
 import io
+import base64
 import datetime
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -199,7 +200,28 @@ class AI(commands.Cog):
             role = "assistant" if m['role'] == "model" else "user"
             content = m['parts'][0]
             if isinstance(content, str): messages.append({"role": role, "content": content})
-        messages.append({"role": "user", "content": msg})
+
+        if img:
+            # Convert PIL to Base64 for Groq Vision
+            buffered = io.BytesIO()
+            # Convert to RGB to avoid issues with transparency when saving as JPEG
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(buffered, format="JPEG")
+            base64_image = base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+            messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": msg if msg else "What is in this image?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                    }
+                ]
+            })
+        else:
+            messages.append({"role": "user", "content": msg})
 
         # Retry Loop for Key Rotation
         for _ in range(len(self.groq_keys) + 1):
