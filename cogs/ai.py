@@ -229,12 +229,28 @@ class AI(commands.Cog):
         # Retry Loop for Key Rotation
         for _ in range(len(self.groq_keys) + 1):
             try:
-                # 1. Try Big Model (70B) or Vision (11B)
-                model = "llama-3.2-11b-vision-preview" if img else "llama-3.3-70b-versatile"
-                comp = await self.groq_client.chat.completions.create(model=model, messages=messages, max_tokens=256)
+                # 1. Try Big Model (70B) or Vision Models
+                if img:
+                    # Try vision models in order of capability/stability
+                    vision_models = ["llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview"]
+                    comp = None
+                    last_error = None
+                    for v_model in vision_models:
+                        try:
+                            comp = await self.groq_client.chat.completions.create(model=v_model, messages=messages, max_tokens=256)
+                            break
+                        except Exception as ve:
+                            print(f"Vision Model {v_model} failed: {ve}")
+                            last_error = ve
+
+                    if not comp: raise last_error
+                else:
+                    model = "llama-3.3-70b-versatile"
+                    comp = await self.groq_client.chat.completions.create(model=model, messages=messages, max_tokens=256)
+
                 return comp.choices[0].message.content
             except Exception as e:
-                print(f"Groq 70B Failed (Key {self.current_groq_index + 1}): {e}")
+                print(f"Groq 70B/Vision Failed (Key {self.current_groq_index + 1}): {e}")
                 traceback.print_exc()
                 
                 # 2. Try Small Model (8B) - Only if NOT an image (8B is text only)
