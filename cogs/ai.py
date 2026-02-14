@@ -4,10 +4,15 @@ from discord import app_commands
 import os
 import io
 import datetime
+import logging
+import asyncio
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from groq import AsyncGroq
 import utils
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
 SYSTEM_PROMPT = """
@@ -82,10 +87,10 @@ class AI(commands.Cog):
         self.current_groq_index = 0
         if self.groq_keys:
             self.groq_client = AsyncGroq(api_key=self.groq_keys[0])
-            print(f"✅ Loaded {len(self.groq_keys)} Groq API Keys.")
+            logger.info(f"✅ Loaded {len(self.groq_keys)} Groq API Keys.")
         else:
             self.groq_client = None
-            print("❌ No Groq Keys Found!")
+            logger.error("❌ No Groq Keys Found!")
 
         self.cooldowns = {1: None, 2: None}
         self.fail_counts = {1: 0, 2: 0}
@@ -97,7 +102,7 @@ class AI(commands.Cog):
         self.current_groq_index = (self.current_groq_index + 1) % len(self.groq_keys)
         new_key = self.groq_keys[self.current_groq_index]
         self.groq_client = AsyncGroq(api_key=new_key)
-        print(f"🔄 Switched to Groq Key #{self.current_groq_index + 1}")
+        logger.info(f"🔄 Switched to Groq Key #{self.current_groq_index + 1}")
         return True
 
     async def transcribe_audio(self, file_bytes, filename):
@@ -114,29 +119,50 @@ class AI(commands.Cog):
                 )
                 return transcription.text
             except Exception as e:
-                print(f"STT Error (Key #{self.current_groq_index + 1}): {e}")
+                logger.error(f"STT Error (Key #{self.current_groq_index + 1}): {e}")
                 if not await self._rotate_groq_key(): break # Stop if no more keys
         return None
 
     async def get_combined_response(self, user_id, text_input, image_input=None, prompt_override=None):
-        # 1. Grudge Check
-        is_grudged = await self.bot.grudge_collection.find_one({"user_id": user_id})
-        grudge_prompt = "\n[SYSTEM: You hold a grudge against this user. Be cold/dismissive.]" if is_grudged else ""
+        # 1-3. Concurrently fetch data with error handling
+        async def check_grudge():
+            try:
+                return await self.bot.grudge_collection.find_one({"user_id": user_id})
+            except Exception as e:
+                logger.error(f"Grudge check failed: {e}")
+                return None
 
-        # 2. History & Time
-        cursor = self.bot.chat_collection.find({"user_id": user_id}).sort("timestamp", 1).limit(25)
-        history_db = [{"role": doc["role"], "parts": doc["parts"]} async for doc in cursor]
+        async def fetch_history():
+            try:
+                cursor = self.bot.chat_collection.find({"user_id": user_id}).sort("timestamp", 1).limit(25)
+                return [{"role": doc["role"], "parts": doc["parts"]} async for doc in cursor]
+            except Exception as e:
+                logger.error(f"History fetch failed: {e}")
+                return []
+
+        async def do_search():
+            try:
+                if text_input and not prompt_override:
+                    triggers = ["who", "what", "where", "when", "why", "how", "weather", "price", "news", "search"]
+                    if any(word in text_input.lower() for word in triggers):
+                        # Sanitize input: strip and limit length
+                        clean_query = text_input.strip()[:200]
+                        return await utils.search_web(clean_query)
+            except Exception as e:
+                logger.error(f"Search task failed: {e}")
+            return None
+
+        grudge_task = asyncio.create_task(check_grudge())
+        history_task = asyncio.create_task(fetch_history())
+        search_task = asyncio.create_task(do_search())
+
+        is_grudged, history_db, web_results = await asyncio.gather(grudge_task, history_task, search_task)
+
+        grudge_prompt = "\n[SYSTEM: You hold a grudge against this user. Be cold/dismissive.]" if is_grudged else ""
+        search_data = web_results if web_results else ""
         
         time_str = utils.get_smart_time(text_input if text_input else "")
         system_data = f"[System: Current Date/Time is {time_str}. Do not mention this unless asked.]{grudge_prompt}"
-
-        # 3. Web Search
-        search_data = ""
-        if text_input and not prompt_override:
-            triggers = ["who", "what", "where", "when", "why", "how", "weather", "price", "news", "search"]
-            if any(word in text_input.lower() for word in triggers):
-                web_results = await utils.search_web(text_input)
-                if web_results: search_data = web_results
 
         # 4. Construct Prompt
         current_text = f"{system_data}\n{search_data}\n\n"
@@ -169,7 +195,7 @@ class AI(commands.Cog):
                     successful = True
                     self.fail_counts[layer] = 0
                 except Exception as e:
-                    print(f"Gemini {layer} Error: {e}")
+                    logger.error(f"Gemini {layer} Error: {e}")
                     self.fail_counts[layer] += 1
                     wait = datetime.timedelta(minutes=1) if self.fail_counts[layer] < 2 else datetime.timedelta(hours=24)
                     self.cooldowns[layer] = now + wait
@@ -184,9 +210,13 @@ class AI(commands.Cog):
         if not prompt_override:
             user_save = text_input if text_input else "[Image]"
             model_save = clean_text if clean_text else f"[GIF: {gif_url}]"
-            timestamp = datetime.datetime.utcnow()
-            await self.bot.chat_collection.insert_one({"user_id": user_id, "role": "user", "parts": [user_save], "timestamp": timestamp})
-            await self.bot.chat_collection.insert_one({"user_id": user_id, "role": "model", "parts": [model_save], "timestamp": timestamp})
+            try:
+                # Use timezone aware datetime
+                timestamp = datetime.datetime.now(datetime.timezone.utc)
+                await self.bot.chat_collection.insert_one({"user_id": user_id, "role": "user", "parts": [user_save], "timestamp": timestamp})
+                await self.bot.chat_collection.insert_one({"user_id": user_id, "role": "model", "parts": [model_save], "timestamp": timestamp})
+            except Exception as e:
+                 logger.error(f"DB Save Error: {e}")
             
         return clean_text, gif_url
 
@@ -209,7 +239,7 @@ class AI(commands.Cog):
                 comp = await self.groq_client.chat.completions.create(model=model, messages=messages, max_tokens=256)
                 return comp.choices[0].message.content
             except Exception as e:
-                print(f"Groq 70B Failed (Key {self.current_groq_index + 1}): {e}")
+                logger.error(f"Groq 70B Failed (Key {self.current_groq_index + 1}): {e}")
                 
                 # 2. Try Small Model (8B) - Only if NOT an image (8B is text only)
                 if not img:
@@ -217,7 +247,7 @@ class AI(commands.Cog):
                         comp = await self.groq_client.chat.completions.create(model="llama-3.1-8b-instant", messages=messages, max_tokens=256)
                         return comp.choices[0].message.content
                     except Exception as e2:
-                        print(f"Groq 8B Failed (Key {self.current_groq_index + 1}): {e2}")
+                        logger.error(f"Groq 8B Failed (Key {self.current_groq_index + 1}): {e2}")
 
                 # 3. If both fail, ROTATE KEY and try loop again
                 if not await self._rotate_groq_key():
@@ -259,7 +289,7 @@ class AI(commands.Cog):
                         embed.set_image(url=gif_url)
                         await message.channel.send(embed=embed)
             except Exception as e:
-                print(f"Error: {e}")
+                logger.error(f"Error in on_message: {e}", exc_info=True)
 
     @app_commands.command(name="ask", description="Ask Yuri a Yes/No question.")
     async def ask(self, interaction: discord.Interaction, question: str):

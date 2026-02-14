@@ -5,9 +5,13 @@ import random
 import pytz
 import aiohttp
 import asyncio
+import logging
 from PIL import Image
 from duckduckgo_search import DDGS
 import discord
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- IMAGE TOOLS ---
 async def get_image_from_url(url):
@@ -16,11 +20,29 @@ async def get_image_from_url(url):
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
-                    if int(resp.headers.get('Content-Length', 0)) > 8 * 1024 * 1024:
+                    # Check header first (fast fail)
+                    content_length = int(resp.headers.get('Content-Length', 0))
+                    if content_length > 8 * 1024 * 1024:
+                        logger.warning(f"Image too large ({content_length} bytes): {url}")
                         return None
-                    data = await resp.read()
-                    return Image.open(io.BytesIO(data))
-    except:
+
+                    # Read in chunks to ensure we don't download too much
+                    data = io.BytesIO()
+                    bytes_read = 0
+                    chunk_size = 1024
+                    limit = 8 * 1024 * 1024
+
+                    async for chunk in resp.content.iter_chunked(chunk_size):
+                        bytes_read += len(chunk)
+                        if bytes_read > limit:
+                            logger.warning(f"Image download exceeded limit: {url}")
+                            return None
+                        data.write(chunk)
+
+                    data.seek(0)
+                    return Image.open(data)
+    except Exception as e:
+        logger.error(f"Image Download Error: {e}")
         return None
     return None
 
@@ -42,7 +64,7 @@ def stitch_images(img1_data, img2_data):
         new_im.paste(img2, (w1, 0))
         return new_im
     except Exception as e:
-        print(f"Stitch Error: {e}")
+        logger.error(f"Stitch Error: {e}")
         return None
 
 # --- SEARCH & TIME TOOLS ---
@@ -74,7 +96,7 @@ async def search_web(query):
             search_context += f"- Title: {res['title']}\n  Snippet: {res['body']}\n"
         return search_context
     except Exception as e:
-        print(f"Search Error: {e}")
+        logger.error(f"Search Error: {e}")
         return None
 
 async def search_gif_ddg(query):
@@ -82,7 +104,7 @@ async def search_gif_ddg(query):
         results = await asyncio.to_thread(lambda: list(DDGS().images(keywords=query, type_image='gif', max_results=8)))
         if results: return random.choice(results)['image']
     except Exception as e:
-        print(f"GIF Search Error: {e}")
+        logger.error(f"GIF Search Error: {e}")
     return None
 
 async def process_gif_tags(text):
