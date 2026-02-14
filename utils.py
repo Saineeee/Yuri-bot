@@ -9,6 +9,13 @@ from PIL import Image
 from duckduckgo_search import DDGS
 import discord
 
+# Pre-compiled Regex Patterns & Constants
+HINDI_RE = re.compile(r'[\u0900-\u097F]')
+BENGALI_RE = re.compile(r'[\u0980-\u09FF]')
+JAPANESE_RE = re.compile(r'[\u3040-\u309F\u30A0-\u30FF]')
+GIF_RE = re.compile(r"\[GIF:\s*(.*?)\]", re.IGNORECASE)
+HINDI_KEYWORDS = ["kya", "kab", "hai", "bhai", "samay", "baj", "baje"]
+
 # --- IMAGE TOOLS ---
 async def get_image_from_url(url):
     """Downloads image with size limit (8MB) to prevent crashes."""
@@ -48,15 +55,16 @@ def stitch_images(img1_data, img2_data):
 # --- SEARCH & TIME TOOLS ---
 def get_smart_time(text_input):
     utc_now = datetime.datetime.now(pytz.utc)
+    text_lower = text_input.lower()
     # Hindi/Hinglish -> IST
-    if re.search(r'[\u0900-\u097F]', text_input) or \
-       re.search(r'[\u0980-\u09FF]', text_input) or \
-       any(word in text_input.lower() for word in ["kya", "kab", "hai", "bhai", "samay", "baj", "baje"]):
+    if HINDI_RE.search(text_input) or \
+       BENGALI_RE.search(text_input) or \
+       any(word in text_lower for word in HINDI_KEYWORDS):
         ist = pytz.timezone('Asia/Kolkata')
         local_time = utc_now.astimezone(ist)
         return f"{local_time.strftime('%I:%M %p')} (IST)"
     # Japanese -> JST
-    if re.search(r'[\u3040-\u309F\u30A0-\u30FF]', text_input):
+    if JAPANESE_RE.search(text_input):
         jst = pytz.timezone('Asia/Tokyo')
         local_time = utc_now.astimezone(jst)
         return f"{local_time.strftime('%I:%M %p')} (JST)"
@@ -86,7 +94,7 @@ async def search_gif_ddg(query):
     return None
 
 async def process_gif_tags(text):
-    gif_match = re.search(r"\[GIF:\s*(.*?)\]", text, re.IGNORECASE)
+    gif_match = GIF_RE.search(text)
     gif_url = None
     if gif_match:
         query = gif_match.group(1).strip()
