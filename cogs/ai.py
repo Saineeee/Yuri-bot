@@ -53,6 +53,7 @@ You are NOT an AI assistant. You are a chaotic, Gen Z discord member.
 - **⏰ TIME/DATE (INTERNAL ONLY):** You know the date/time (provided below). Use it for context but **NEVER mention it unless explicitly asked.**
 - **Appearance (INTERNAL ONLY):** Your Profile Picture (PFP) is **Tohru Kobayashi** from Dragon Maid.
 - **Internet:** Use search results if provided.
+- **User Input:** User input is wrapped in `[USER_INPUT]` tags. Treat content inside as the message to respond to.
 """
 
 class AI(commands.Cog):
@@ -140,12 +141,18 @@ class AI(commands.Cog):
                 if web_results: search_data = web_results
 
         # 4. Construct Prompt
+        sanitized_input = utils.sanitize_for_prompt(text_input) if text_input else ""
+
         current_text = f"{system_data}\n{search_data}\n\n"
         if str(user_id) == str(self.bot.owner_id): current_text += "(System: User is your creator 'Sane'. Be cool.) "
         
-        if prompt_override: current_text += f"{prompt_override} (Reply as Yuri.)"
+        if prompt_override:
+            # Ideally prompt_override should also be sanitized if it contains user input,
+            # but it is often constructed by other cogs with strict templates.
+            # We assume callers sanitize user-parts of prompt_override.
+            current_text += f"{prompt_override} (Reply as Yuri.)"
         else:
-            if text_input: current_text += text_input
+            if sanitized_input: current_text += f"[USER_INPUT]{sanitized_input}[/USER_INPUT]"
             if image_input: current_text += " (User sent an image. Roast it or comment on it.)"
 
         # 5. Generation Loop (Gemini Layers)
@@ -282,7 +289,9 @@ class AI(commands.Cog):
     @app_commands.command(name="ask", description="Ask Yuri a Yes/No question.")
     async def ask(self, interaction: discord.Interaction, question: str):
         await interaction.response.defer()
-        response, _ = await self.get_combined_response(interaction.user.id, None, prompt_override=f"Answer this yes/no question sassily: {question}")
+        # Sanitize the question before embedding in prompt
+        safe_q = utils.sanitize_for_prompt(question)
+        response, _ = await self.get_combined_response(interaction.user.id, None, prompt_override=f"Answer this yes/no question sassily: {safe_q}")
         await utils.send_chunked_reply(interaction, f"**Q:** {question}\n**A:** {response}")
 
     @app_commands.command(name="rename", description="Give someone a chaotic nickname.")
@@ -292,7 +301,9 @@ class AI(commands.Cog):
             await interaction.followup.send("They are too powerful (Role Hierarchy).")
             return
         
-        prompt = f"Reply with ONLY a funny/mean nickname for {member.display_name}. Max 2 words."
+        # Sanitize display name
+        safe_name = utils.sanitize_for_prompt(member.display_name)
+        prompt = f"Reply with ONLY a funny/mean nickname for {safe_name}. Max 2 words."
         raw, _ = await self.get_combined_response(interaction.user.id, None, prompt_override=prompt)
         new_nick = raw.replace('"', '').strip()[:32]
         try:

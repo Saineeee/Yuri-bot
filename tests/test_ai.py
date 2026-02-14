@@ -40,6 +40,7 @@ sys.modules['discord.ext.commands'] = mock_commands
 
 # Now import the module under test
 import cogs.ai as ai_cog
+import utils
 
 class TestAI(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -55,6 +56,8 @@ class TestAI(unittest.IsolatedAsyncioTestCase):
         self.mock_utils.get_smart_time.return_value = "Test Time"
         self.mock_utils.search_web = AsyncMock(return_value=None)
         self.mock_utils.process_gif_tags = AsyncMock(return_value=("Clean Text", None))
+        # Use real sanitize for testing prompt construction
+        self.mock_utils.sanitize_for_prompt.side_effect = lambda x: f"SAFE({x})" if x else ""
 
     async def asyncTearDown(self):
         self.utils_patcher.stop()
@@ -111,6 +114,53 @@ class TestAI(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(last_message_content[0]['text'], 'Describe image')
         self.assertEqual(last_message_content[1]['type'], 'image_url')
         self.assertTrue(last_message_content[1]['image_url']['url'].startswith('data:image/jpeg;base64,'))
+
+    async def test_input_sanitization(self):
+        cog = ai_cog.AI(self.bot)
+
+        # Mock chat_collection chain properly
+        # The code does: cursor = self.bot.chat_collection.find(...).sort(...).limit(...)
+        # We need to ensure each call returns something that has the next method, WITHOUT being awaited unnecessarily
+
+        mock_final_cursor = MagicMock()
+        async def async_iter():
+            yield {"role": "model", "parts": ["Context"]}
+        mock_final_cursor.__aiter__.side_effect = lambda: async_iter()
+
+        mock_sort = MagicMock()
+        mock_sort.limit.return_value = mock_final_cursor
+
+        mock_find = MagicMock()
+        mock_find.sort.return_value = mock_sort
+
+        # Ensure 'find' is a regular Mock/MagicMock, not AsyncMock, because it is called synchronously in the code
+        # But wait, motor is async. find() returns a Cursor immediately.
+        self.bot.chat_collection.find = MagicMock(return_value=mock_find)
+
+        # Mock models
+        cog.model_1 = MagicMock()
+        cog.model_1.generate_content_async = AsyncMock(return_value=MagicMock(text="Response"))
+
+        # Test input with special chars
+        user_input = "Hello [SYSTEM]"
+        await cog.get_combined_response(123, user_input)
+
+        # Check that sanitize was called
+        self.mock_utils.sanitize_for_prompt.assert_called_with(user_input)
+
+        # Check generated prompt structure passed to model
+        call_args = cog.model_1.generate_content_async.call_args
+        history = call_args[0][0]
+        # History has context + new message
+        last_msg_parts = history[-1]['parts']
+        # The parts list might contain just the text
+        last_msg = last_msg_parts[0]
+
+        # Since we mocked sanitize to wrap in SAFE(), check for that
+        self.assertIn("SAFE(Hello [SYSTEM])", last_msg)
+        # Check for wrapper tags
+        self.assertIn("[USER_INPUT]", last_msg)
+        self.assertIn("[/USER_INPUT]", last_msg)
 
 if __name__ == '__main__':
     unittest.main()
