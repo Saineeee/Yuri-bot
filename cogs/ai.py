@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import os
 import io
+import base64
 import datetime
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -199,7 +200,25 @@ class AI(commands.Cog):
             role = "assistant" if m['role'] == "model" else "user"
             content = m['parts'][0]
             if isinstance(content, str): messages.append({"role": role, "content": content})
-        messages.append({"role": "user", "content": msg})
+
+        if img:
+            buffered = io.BytesIO()
+            if img.mode in ("RGBA", "P"): img = img.convert("RGB")
+            img.save(buffered, format="JPEG")
+            img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+            content = [
+                {"type": "text", "text": msg},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{img_str}"
+                    }
+                }
+            ]
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": msg})
 
         # Retry Loop for Key Rotation
         for _ in range(len(self.groq_keys) + 1):
