@@ -4,6 +4,7 @@ from discord import app_commands
 import os
 import io
 import datetime
+import base64
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from groq import AsyncGroq
@@ -199,7 +200,24 @@ class AI(commands.Cog):
             role = "assistant" if m['role'] == "model" else "user"
             content = m['parts'][0]
             if isinstance(content, str): messages.append({"role": role, "content": content})
-        messages.append({"role": "user", "content": msg})
+
+        # Format user message properly for vision
+        if img:
+            # Resize if needed (Vision models have limits)
+            if img.width > 1024 or img.height > 1024:
+                img.thumbnail((1024, 1024))
+
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG")
+            img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+            user_content = [
+                {"type": "text", "text": msg},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+            ]
+            messages.append({"role": "user", "content": user_content})
+        else:
+            messages.append({"role": "user", "content": msg})
 
         # Retry Loop for Key Rotation
         for _ in range(len(self.groq_keys) + 1):
