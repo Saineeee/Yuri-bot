@@ -5,6 +5,7 @@ import os
 import io
 import base64
 import datetime
+import traceback
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from groq import AsyncGroq
@@ -202,6 +203,11 @@ class AI(commands.Cog):
             if isinstance(content, str): messages.append({"role": role, "content": content})
 
         if img:
+            # Resize if too large (Max 1024x1024) to prevent payload issues
+            max_dim = 1024
+            if img.width > max_dim or img.height > max_dim:
+                img.thumbnail((max_dim, max_dim))
+
             buffered = io.BytesIO()
             if img.mode in ("RGBA", "P"): img = img.convert("RGB")
             img.save(buffered, format="JPEG")
@@ -229,6 +235,7 @@ class AI(commands.Cog):
                 return comp.choices[0].message.content
             except Exception as e:
                 print(f"Groq 70B Failed (Key {self.current_groq_index + 1}): {e}")
+                traceback.print_exc()
                 
                 # 2. Try Small Model (8B) - Only if NOT an image (8B is text only)
                 if not img:
