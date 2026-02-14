@@ -12,29 +12,45 @@ import discord
 # --- IMAGE TOOLS ---
 async def get_image_from_url(url):
     """Downloads image with size limit (8MB) to prevent crashes."""
+    MAX_SIZE = 8 * 1024 * 1024
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
-                    if int(resp.headers.get('Content-Length', 0)) > 8 * 1024 * 1024:
+                    content_length = resp.headers.get('Content-Length')
+                    if content_length and int(content_length) > MAX_SIZE:
                         return None
-                    data = await resp.read()
+
+                    data = bytearray()
+                    async for chunk in resp.content.iter_chunked(1024):
+                        data.extend(chunk)
+                        if len(data) > MAX_SIZE:
+                            return None
+
                     return Image.open(io.BytesIO(data))
-    except:
+    except Exception as e:
+        print(f"Download Error: {e}")
         return None
     return None
 
 def stitch_images(img1_data, img2_data):
     """Combines two PIL images side-by-side."""
     try:
+        # Security: Prevent processing extremely large images (Decompression Bombs)
+        Image.MAX_IMAGE_PIXELS = 5000 * 5000
+
+        if img1_data.width > 5000 or img1_data.height > 5000 or \
+           img2_data.width > 5000 or img2_data.height > 5000:
+            return None
+
         base_height = 512
         ratio1 = base_height / float(img1_data.size[1])
         w1 = int((float(img1_data.size[0]) * float(ratio1)))
-        img1 = img1_data.resize((w1, base_height), Image.Resampling.LANCZOS)
+        img1 = img1_data.resize((w1, base_height), Image.Resampling.BICUBIC)
         
         ratio2 = base_height / float(img2_data.size[1])
         w2 = int((float(img2_data.size[0]) * float(ratio2)))
-        img2 = img2_data.resize((w2, base_height), Image.Resampling.LANCZOS)
+        img2 = img2_data.resize((w2, base_height), Image.Resampling.BICUBIC)
 
         total_width = w1 + w2
         new_im = Image.new('RGB', (total_width, base_height))
@@ -139,7 +155,7 @@ def get_user_dossier(member: discord.Member):
 
 async def get_user_history_text(collection, user_id, limit=15):
     """Fetches recent text messages from a specific user for context."""
-    cursor = collection.find({"user_id": user_id, "role": "user"}).sort("timestamp", -1).limit(limit)
+    cursor = collection.find({"user_id": user_id, "role": "user"}, {"parts": 1, "_id": 0}).sort("timestamp", -1).limit(limit)
     messages = []
     async for doc in cursor:
         content = doc.get("parts", [""])[0]

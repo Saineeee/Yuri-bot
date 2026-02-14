@@ -8,6 +8,28 @@ class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    @commands.command()
+    async def health(self, ctx):
+        start = datetime.datetime.now()
+        try:
+            await self.bot.mongo.admin.command('ping')
+            db_status = "✅ Connected"
+        except Exception as e:
+            db_status = f"❌ Failed: {e}"
+
+        latency = (datetime.datetime.now() - start).total_seconds() * 1000
+
+        ai_cog = self.bot.get_cog("AI")
+        groq_status = "✅ Active" if ai_cog and ai_cog.groq_client else "❌ Inactive"
+
+        msg = (
+            f"**🏥 SYSTEM HEALTH**\n"
+            f"- **Ping:** {round(self.bot.latency * 1000)}ms\n"
+            f"- **Database:** {db_status} ({int(latency)}ms)\n"
+            f"- **AI (Groq):** {groq_status}\n"
+        )
+        await ctx.send(msg)
+
     @app_commands.command(name="setup", description="Admin: Set confession channel.")
     @app_commands.checks.has_permissions(administrator=True)
     async def setup(self, interaction: discord.Interaction, channel: discord.TextChannel):
