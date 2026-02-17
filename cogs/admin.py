@@ -31,8 +31,12 @@ class Admin(commands.Cog):
         await ctx.send(msg)
 
     @app_commands.command(name="setup", description="Admin: Set confession channel.")
-    @app_commands.checks.has_permissions(administrator=True)
     async def setup(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        # 1. Manual Permission Check (Replaces the decorator)
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("You have to be the server owner or admin to use this command", ephemeral=True)
+            return
+
         await interaction.response.defer(ephemeral=True)
         await self.bot.config_collection.update_one(
             {"guild_id": interaction.guild_id}, 
@@ -110,14 +114,41 @@ class Admin(commands.Cog):
     @commands.is_owner()
     async def inbox(self, ctx):
         cursor = self.bot.feedback_collection.find({}).sort("timestamp", -1)
-        log = "INBOX\n" + "="*30 + "\n"
+        # 2. Updated Format: Includes User ID for copying
+        log = "INBOX (Format: [CATEGORY] Name (ID): Message)\n" + "="*50 + "\n"
         count = 0
         async for doc in cursor:
-            log += f"[{doc['category'].upper()}] {doc['username']}: {doc['message']}\n"
+            log += f"[{doc['category'].upper()}] {doc['username']} ({doc['user_id']}): {doc['message']}\n"
             count += 1
         
         if count == 0: return await ctx.send("📭 Empty.")
         await ctx.send(f"📬 {count} items.", file=discord.File(io.BytesIO(log.encode()), filename="inbox.txt"))
+
+    @commands.command(name="reply")
+    @commands.is_owner()
+    async def reply(self, ctx, user_id: int, *, message: str):
+        """Reply to a user's feedback via DM."""
+        # 3. New Reply Command
+        try:
+            target = await self.bot.fetch_user(user_id)
+            if not target:
+                await ctx.send("❌ User not found.")
+                return
+            
+            embed = discord.Embed(
+                title="📬 Response from Developer",
+                description=message,
+                color=discord.Color.from_rgb(255, 105, 180) # Yuri Pink
+            )
+            embed.set_footer(text=f"Don't reply to this message, if there's anything else then pls use /feedback once again")
+            
+            await target.send(embed=embed)
+            await ctx.send(f"✅ Reply sent to **{target.name}**!")
+            
+        except discord.Forbidden:
+            await ctx.send("❌ **Failed:** User has DMs disabled.")
+        except Exception as e:
+            await ctx.send(f"❌ **Error:** {e}")
 
 async def setup(bot):
     await bot.add_cog(Admin(bot))
