@@ -20,7 +20,7 @@ class Social(commands.Cog):
         history = await utils.get_user_history_text(self.bot.chat_collection, member.id)
         pfp = await utils.get_image_from_url(member.display_avatar.url) if member.display_avatar else None
         
-        prompt = (f"TARGET:\n{dossier}\nRECENT CHATS:\n{history}\n"
+        prompt = (f"TARGET:\n[USER_DATA]{dossier}[/USER_DATA]\nRECENT CHATS:\n[USER_DATA]{history}[/USER_DATA]\n"
                   f"INSTRUCTION: Roast them based on PFP and chat history. Call them out on things they said. Be brutal.")
         
         ai = await self.get_ai_cog()
@@ -34,7 +34,7 @@ class Social(commands.Cog):
         history = await utils.get_user_history_text(self.bot.chat_collection, member.id)
         pfp = await utils.get_image_from_url(member.display_avatar.url) if member.display_avatar else None
         
-        prompt = (f"TARGET:\n{dossier}\nRECENT CHATS:\n{history}\n"
+        prompt = (f"TARGET:\n[USER_DATA]{dossier}[/USER_DATA]\nRECENT CHATS:\n[USER_DATA]{history}[/USER_DATA]\n"
                   f"INSTRUCTION: Rate vibe (0-100%). If they are funny/nice in chats, give high score. If dry/rude, destroy them.")
         
         ai = await self.get_ai_cog()
@@ -58,7 +58,7 @@ class Social(commands.Cog):
             if img1 and img2:
                 combined_img = await asyncio.to_thread(utils.stitch_images, img1, img2)
 
-        prompt = (f"USER 1:\n{d1}\nCHATS:\n{h1}\n\nUSER 2:\n{d2}\nCHATS:\n{h2}\n"
+        prompt = (f"USER 1:\n[USER_DATA]{d1}[/USER_DATA]\nCHATS:\n[USER_DATA]{h1}[/USER_DATA]\n\nUSER 2:\n[USER_DATA]{d2}[/USER_DATA]\nCHATS:\n[USER_DATA]{h2}[/USER_DATA]\n"
                   f"INSTRUCTION: Check compatibility. Analyze chat styles. Give % Score.")
         
         ai = await self.get_ai_cog()
