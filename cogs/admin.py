@@ -16,19 +16,12 @@ class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # ------------------------------------------------------------------
-    # Owner-only prefix commands (rich detail — never exposed publicly)
-    # ------------------------------------------------------------------
+    # Owner only prefix commands
 
     @commands.command()
     @commands.is_owner()
     async def health(self, ctx):
-        """Owner-only: detailed system health with all internals.
-
-        Shows WebSocket ping, DB latency, AI provider status, guild count,
-        and loaded cogs. Restricted to the bot owner because it leaks
-        architecture details that could help attackers.
-        """
+        """Owner-only: detailed system health with all internals."""
         start = datetime.datetime.now(datetime.timezone.utc)
         try:
             await self.bot.mongo.admin.command('ping')
@@ -46,7 +39,7 @@ class Admin(commands.Cog):
         loaded_cogs = [name for name, cog in self.bot.cogs.items() if cog is not None]
 
         msg = (
-            f"**🏥 SYSTEM HEALTH (owner-only)**\n"
+            f"**ℹ️ SYSTEM HEALTH (owner-only)**\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"**Discord**\n"
             f"- WebSocket ping: **{round(self.bot.latency * 1000)}ms**\n"
@@ -62,33 +55,20 @@ class Admin(commands.Cog):
         )
         await ctx.send(msg)
 
-    # ------------------------------------------------------------------
-    # Public slash command (minimal info — safe for everyone)
-    # ------------------------------------------------------------------
+    # Public slash command
 
     @app_commands.command(
         name="status",
         description="Check if Yuri is online and operational.",
     )
     async def status_slash(self, interaction: discord.Interaction) -> None:
-        """Public slash command: minimal status check.
-
-        Returns a simple ✅/⚠️ status with NO internal details (no ping
-        numbers, no DB latency, no provider list, no cog list). Safe for
-        any user to run — designed for uptime monitoring (UptimeRobot,
-        Railway health checks) and quick "is the bot alive?" checks.
-
-        For the full detailed health report, the owner can use `!health`.
-        """
-        # A single lightweight DB ping — we don't expose the latency, just
-        # whether it succeeded. This is enough to detect outages.
+        """Public slash command: minimal status check."""
         db_ok = True
         try:
             await self.bot.mongo.admin.command('ping')
         except Exception:
             db_ok = False
-
-        # Discord gateway connection is healthy if latency is finite
+            
         gateway_ok = self.bot.latency != float('inf')
 
         if db_ok and gateway_ok:
@@ -100,7 +80,6 @@ class Admin(commands.Cog):
             embed.set_footer(text="Yuri Bot • /status")
             await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
-            # Determine the degraded reason without leaking specifics
             issues = []
             if not gateway_ok:
                 issues.append("gateway connection")
@@ -110,8 +89,8 @@ class Admin(commands.Cog):
             embed = discord.Embed(
                 title="⚠️ Degraded Performance",
                 description=(
-                    "some things aren't working right now 💀 "
-                    "the dev has been notified — try again in a bit."
+                    "some things aren't working rn"
+                    "the dev has been notified, try again in a bit."
                 ),
                 color=discord.Color.orange(),
                 timestamp=utils.utcnow(),
@@ -119,16 +98,13 @@ class Admin(commands.Cog):
             embed.set_footer(text="Yuri Bot • /status")
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
-            # Log the specifics for the developer (not exposed to the user)
+            # Log the specifics for the dev
             log.warning("status check failed: issues=%s", issues)
 
-    # ------------------------------------------------------------------
     # Slash commands
-    # ------------------------------------------------------------------
 
     @app_commands.command(name="setup", description="Admin: Set confession channel.")
     async def setup(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        # 1. Manual Permission Check (Replaces the decorator)
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("You have to be the server owner or admin to use this command", ephemeral=True)
             return
@@ -150,14 +126,14 @@ class Admin(commands.Cog):
             {"$set": {"timestamp": utils.utcnow()}},
             upsert=True,
         )
-        await interaction.followup.send(f"💀 **Grudge added.** I now hate {member.display_name}.")
+        await interaction.followup.send(f"✊ **Grudge added.** I now hate {member.display_name}.")
 
     @app_commands.command(name="ungrudge", description="Admin: Forgive a user.")
     @app_commands.checks.has_permissions(administrator=True)
     async def ungrudge(self, interaction: discord.Interaction, member: discord.Member):
         await interaction.response.defer(ephemeral=True)
         await self.bot.grudge_collection.delete_one({"user_id": member.id})
-        await interaction.followup.send(f"✨ **Forgiven.**")
+        await interaction.followup.send(f"⭐️ **Forgiven.**")
 
     @app_commands.command(name="wipe", description="Admin: Wipe user memory.")
     async def wipe(self, interaction: discord.Interaction, member: discord.Member):
@@ -175,7 +151,7 @@ class Admin(commands.Cog):
         if result.deleted_count == 0:
             await interaction.followup.send("i literally don't remember anything about you already 💀")
         else:
-            await interaction.followup.send("✅ done. who are you again? i forgor 🫠")
+            await interaction.followup.send("✅ done. who are you again? i forgor 🫠🙏")
 
     @app_commands.command(
         name="export",
@@ -197,7 +173,6 @@ class Admin(commands.Cog):
 
         records = []
         async for doc in cursor:
-            # Make timestamps JSON-serializable
             ts = doc.get("timestamp")
             if isinstance(ts, datetime.datetime):
                 doc["timestamp"] = ts.isoformat()
@@ -224,7 +199,7 @@ class Admin(commands.Cog):
                     io.BytesIO(data),
                     filename=f"yuri_data_export_{interaction.user.id}.json",
                 ),
-                content=f"📦 Here's your data export — {len(records)} records. "
+                content=f"⬇️ Here's your data export — {len(records)} records. "
                         f"Use `/clearhistory` if you want to delete it all.",
             )
             await interaction.followup.send(
@@ -270,14 +245,12 @@ class Admin(commands.Cog):
         if include_presence:
             msg = "✅ Presence data is now **shared** with the AI when roasting / rating you (default)."
         else:
-            msg = ("🔒 Presence data is now **hidden**. /roast, /rate, /ship, /compatibility "
+            msg = ("ℹ️ Presence data is now **hidden**. /roast, /rate, /ship, /compatibility "
                    "will not include your Spotify songs, games, or custom status.")
 
         await interaction.followup.send(msg, ephemeral=True)
 
-    # ------------------------------------------------------------------
     # Owner prefix commands
-    # ------------------------------------------------------------------
 
     @commands.command(name="stats")
     @commands.is_owner()
@@ -297,15 +270,15 @@ class Admin(commands.Cog):
         )
 
         msg = (
-            f"**📊 YURI STATS**\n"
+            f"**ℹ️ YURI STATS**\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🌐 **Servers:** {total_servers}\n"
-            f"👥 **Unique Users:** {total_users}\n"
-            f"💬 **Total Messages:** {total_messages:,}\n"
-            f"📅 **Messages Today:** {todays_messages:,}\n"
+            f"↔️ **Servers:** {total_servers}\n"
+            f"↔️ **Unique Users:** {total_users}\n"
+            f"↔️ **Total Messages:** {total_messages:,}\n"
+            f"↔️ **Messages Today:** {todays_messages:,}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"💀 **Active Grudges:** {total_grudges}\n"
-            f"💖 **Pending Crushes:** {total_crushes}\n"
+            f"✊ **Active Grudges:** {total_grudges}\n"
+            f"♥️ **Pending Crushes:** {total_crushes}\n"
             f"📬 **Feedback Items:** {total_feedback}\n"
         )
         await ctx.send(msg)
@@ -320,9 +293,7 @@ class Admin(commands.Cog):
             !wipeall            → asks for confirmation
             !wipeall confirm    → actually wipes
         """
-        # Confirmation gate: must pass the literal 'confirm' argument.
-        # Without it, we just print a warning. This prevents a typo like
-        # '!wipeall' (intended '!usercount') from nuking the whole DB.
+        
         if not ctx.message.content.strip().lower().endswith("confirm"):
             await ctx.send(
                 "⚠️ **SYSTEM PURGE REQUESTED.**\n"
@@ -331,8 +302,6 @@ class Admin(commands.Cog):
                 "To confirm, run: `!wipeall confirm` within 30 seconds."
             )
 
-            # Optional: also accept a follow-up '!wipeall confirm' within 30s.
-            # The simple approach above (requiring the literal arg) is enough.
             return
 
         await self.bot.chat_collection.delete_many({})
@@ -344,19 +313,14 @@ class Admin(commands.Cog):
     async def user_count(self, ctx):
         """Owner only: Shows how many unique users are in the database."""
         users = await self.bot.chat_collection.distinct("user_id")
-        await ctx.send(f"📊 Database contains context data for **{len(users)}** users.")
+        await ctx.send(f"ℹ️ Database contains context data for **{len(users)}** users.")
 
     @commands.command(name="fetchlog")
     @commands.is_owner()
     async def fetch_log(self, ctx, user_id: int):
-        """Owner only: Fetches a user's chat history for debugging context.
-
-        Now DM-only — previously this dumped a user's full conversation log
-        into whatever channel the command was run in, which could leak
-        sensitive data if run in a public channel.
-        """
+        """Owner only: Fetches a user's chat history for debugging context."""
         if ctx.guild is not None:
-            await ctx.send("🔒 This command is DM-only. DM me instead to avoid leaking data.")
+            await ctx.send("ℹ️ This command is DM-only. DM me instead to avoid leaking data.")
             return
 
         cursor = self.bot.chat_collection.find({"user_id": user_id}).sort("timestamp", 1)
@@ -379,12 +343,9 @@ class Admin(commands.Cog):
     @commands.command(name="dailylog")
     @commands.is_owner()
     async def daily_log(self, ctx):
-        """Owner only: Shows recent bot interactions to monitor for errors or usage spikes.
-
-        Now DM-only — same data-leak rationale as !fetchlog.
-        """
+        """Owner only: Shows recent bot interactions to monitor for errors or usage spikes."""
         if ctx.guild is not None:
-            await ctx.send("🔒 This command is DM-only. DM me instead to avoid leaking data.")
+            await ctx.send("ℹ️ This command is DM-only. DM me instead to avoid leaking data.")
             return
 
         now = utils.utcnow()
@@ -414,13 +375,9 @@ class Admin(commands.Cog):
     @commands.command()
     @commands.is_owner()
     async def inbox(self, ctx):
-        """Owner only: Lists all feedback submissions.
-
-        Now DM-only — feedback messages contain user IDs + free-text content
-        that must never be exposed in a public channel.
-        """
+        """Owner only: Lists all feedback submissions."""
         if ctx.guild is not None:
-            await ctx.send("🔒 This command is DM-only. DM me instead to avoid leaking feedback.")
+            await ctx.send("ℹ️ This command is DM-only. DM me instead to avoid leaking feedback.")
             return
 
         cursor = self.bot.feedback_collection.find({}).sort("timestamp", -1)
@@ -458,7 +415,7 @@ class Admin(commands.Cog):
                 color=discord.Color.from_rgb(255, 105, 180),
                 timestamp=utils.utcnow(),
             )
-            embed.set_footer(text="Don't reply to this message, if there's anything else then pls use /feedback once again")
+            embed.set_footer(text="Pls Don't reply to this message, if there's anything else then use /feedback once again")
 
             await target.send(embed=embed)
             await ctx.send(f"✅ Reply sent to **{target.name}**!")
