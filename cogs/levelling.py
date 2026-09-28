@@ -1,41 +1,33 @@
-"""Levelling/XP system cog.
+"""Levelling/XP: /rank, /leaderboard, /rankroles + XP on every message.
 
-Awards XP for each message sent (with a 60s cooldown per user to prevent
-spam farming). Includes:
-  - /rank        — show your rank card (level, XP, position)
-  - /leaderboard — top 10 users in the server
-  - /rankroles   — admin: configure automatic role rewards at level thresholds
-
-XP curve: level N requires 5 * N^2 + 50 * N + 100 XP (MEE6-style).
+XP curve is MEE6-style: level N costs 5*N^2 + 50*N XP.
 """
-import discord
-from discord.ext import commands
-from discord import app_commands
 
-import math
+import asyncio
+import contextlib
 import logging
-from typing import Optional
+import random
+import time
+
+import discord
+from discord import app_commands
+from discord.ext import commands
 
 import utils
 
 log = logging.getLogger(__name__)
 
 
-XP_PER_MESSAGE = 15          # base XP per message
-XP_COOLDOWN_SECS = 60        # min seconds between XP awards per user
-XP_RANGE = 10                # random +/- range on XP per message
+XP_PER_MESSAGE = 15  # base XP per message
+XP_COOLDOWN_SECS = 60  # min seconds between XP awards per user
+XP_RANGE = 10  # random +/- range on XP per message
 
 
 def xp_for_level(level: int) -> int:
-    """Total XP required to reach *level* (from 0).
-
-    Level 0 requires 0 XP (everyone starts at level 0).
-    Level 1 requires 55 XP, level 2 requires 220, level 5 requires 875, etc.
-    Curve: 5*N² + 50*N (MEE6-style).
-    """
+    """Total XP required to reach *level* (level 0 is free)."""
     if level <= 0:
         return 0
-    return 5 * (level ** 2) + 50 * level
+    return 5 * (level**2) + 50 * level
 
 
 def level_from_xp(xp: int) -> tuple[int, int]:
@@ -53,16 +45,11 @@ def level_from_xp(xp: int) -> tuple[int, int]:
 class Levelling(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self._xp_cooldowns: dict[int, float] = {}  # user_id → last_award_time
-
-    # ------------------------------------------------------------------
-    # XP awarding (on every message)
-    # ------------------------------------------------------------------
+        self._xp_cooldowns: dict[int, float] = {}  # user_id -> last_award_time
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         """Award XP for non-bot, non-command messages."""
-        # Skip bots, DMs, and command invocations
         if message.author.bot:
             return
         if message.guild is None:
@@ -70,20 +57,16 @@ class Levelling(commands.Cog):
         if message.content.startswith(self.bot.command_prefix):
             return
         if not message.content.strip():
-            return  # skip empty / attachment-only messages for XP
+            return  # skip empty / attachment-only messages
 
-        import time
         now = time.monotonic()
         last = self._xp_cooldowns.get(message.author.id, 0)
         if now - last < XP_COOLDOWN_SECS:
             return
         self._xp_cooldowns[message.author.id] = now
 
-        # Award random XP
-        import random
         xp_gain = XP_PER_MESSAGE + random.randint(-XP_RANGE, XP_RANGE)
 
-        # Upsert the user's XP doc
         result = await self.bot.xp_collection.find_one_and_update(
             {"guild_id": message.guild.id, "user_id": message.author.id},
             {
@@ -95,10 +78,9 @@ class Levelling(commands.Cog):
                 "$set": {"last_message_at": utils.utcnow()},
             },
             upsert=True,
-            return_document=True,  # return the updated doc
+            return_document=True,
         )
 
-        # Check for level-up + role rewards
         await self._check_level_up(message, result)
 
     async def _check_level_up(self, message: discord.Message, user_doc: dict) -> None:
@@ -115,21 +97,19 @@ class Levelling(commands.Cog):
         try:
             embed = discord.Embed(
                 title="🎉 Level Up!",
-                description=(
-                    f"gg <@{message.author.id}> you hit **level {new_level}** fr fr"
-                ),
+                description=(f"gg <@{message.author.id}> you hit **level {new_level}** fr fr"),
                 color=discord.Color.from_rgb(255, 105, 180),
             )
             announcement = await message.channel.send(embed=embed)
-            # Schedule deletion after 10 seconds
             self.bot.loop.create_task(self._delete_after(announcement, 10))
         except Exception as e:
             log.warning("level-up announcement failed: %s", e)
 
-        # Grant role rewards if configured
         await self._grant_level_roles(message.guild, message.author, new_level)
 
-    async def _grant_level_roles(self, guild: discord.Guild, member: discord.Member, level: int) -> None:
+    async def _grant_level_roles(
+        self, guild: discord.Guild, member: discord.Member, level: int
+    ) -> None:
         """Grant any role rewards the user has earned at *level*."""
         config = await self.bot.config_collection.find_one({"guild_id": guild.id})
         if config is None:
@@ -160,16 +140,9 @@ class Levelling(commands.Cog):
 
     @staticmethod
     async def _delete_after(message: discord.Message, delay: float) -> None:
-        import asyncio
         await asyncio.sleep(delay)
-        try:
+        with contextlib.suppress(Exception):
             await message.delete()
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------------
-    # Slash commands
-    # ------------------------------------------------------------------
 
     @app_commands.command(
         name="rank",
@@ -179,7 +152,7 @@ class Levelling(commands.Cog):
     async def rank(
         self,
         interaction: discord.Interaction,
-        member: Optional[discord.Member] = None,
+        member: discord.Member | None = None,
     ) -> None:
         """Show a user's rank card."""
         if not interaction.guild:
@@ -196,9 +169,7 @@ class Levelling(commands.Cog):
         )
 
         if user_doc is None:
-            await interaction.followup.send(
-                f"{target.mention} hasn't sent any messages yet 💀"
-            )
+            await interaction.followup.send(f"{target.mention} hasn't sent any messages yet 💀")
             return
 
         xp = user_doc.get("xp", 0)
@@ -206,14 +177,16 @@ class Levelling(commands.Cog):
         xp_for_next = xp_for_level(level + 1) - xp_for_level(level)
         progress_pct = int((xp_into / xp_for_next) * 100) if xp_for_next > 0 else 100
 
-        # Compute server rank
-        rank_cursor = self.bot.xp_collection.count_documents({
-            "guild_id": interaction.guild.id,
-            "xp": {"$gt": xp},
-        })
-        server_rank = rank_cursor + 1
+        server_rank = (
+            await self.bot.xp_collection.count_documents(
+                {
+                    "guild_id": interaction.guild.id,
+                    "xp": {"$gt": xp},
+                }
+            )
+            + 1
+        )
 
-        # Build a progress bar
         bar_len = 15
         filled = int(bar_len * progress_pct / 100)
         bar = "█" * filled + "░" * (bar_len - filled)
@@ -232,7 +205,7 @@ class Levelling(commands.Cog):
             value=f"`{bar}` {xp_into}/{xp_for_next} ({progress_pct}%)",
             inline=False,
         )
-        embed.set_footer(text=f"keep chatting to level up bestie")
+        embed.set_footer(text="keep chatting to level up bestie")
 
         await interaction.followup.send(embed=embed)
 
@@ -251,17 +224,12 @@ class Levelling(commands.Cog):
         await interaction.response.defer()
 
         cursor = (
-            self.bot.xp_collection
-            .find({"guild_id": interaction.guild.id})
-            .sort("xp", -1)
-            .limit(10)
+            self.bot.xp_collection.find({"guild_id": interaction.guild.id}).sort("xp", -1).limit(10)
         )
         docs = [doc async for doc in cursor]
 
         if not docs:
-            await interaction.followup.send(
-                "nobody has any XP yet 💀 start chatting bestie"
-            )
+            await interaction.followup.send("nobody has any XP yet 💀 start chatting bestie")
             return
 
         lines = []
@@ -271,7 +239,7 @@ class Levelling(commands.Cog):
             xp = doc.get("xp", 0)
             level, _ = level_from_xp(xp)
             medal = medals[i] if i < 3 else f"**#{i + 1}**"
-            lines.append(f"{medal} <@{user_id}> — **Lvl {level}** • {xp:,} XP")
+            lines.append(f"{medal} <@{user_id}> - **Lvl {level}** • {xp:,} XP")
 
         embed = discord.Embed(
             title=f"🏆 {interaction.guild.name} Leaderboard",
@@ -292,10 +260,12 @@ class Levelling(commands.Cog):
         role="the role to grant",
         action="add or remove this level reward",
     )
-    @app_commands.choices(action=[
-        app_commands.Choice(name="add", value="add"),
-        app_commands.Choice(name="remove", value="remove"),
-    ])
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="add", value="add"),
+            app_commands.Choice(name="remove", value="remove"),
+        ]
+    )
     @app_commands.checks.has_permissions(manage_roles=True)
     async def rankroles(
         self,
@@ -304,7 +274,7 @@ class Levelling(commands.Cog):
         role: discord.Role,
         action: app_commands.Choice[str],
     ) -> None:
-        """Add or remove a level→role reward."""
+        """Add or remove a level -> role reward."""
         if not interaction.guild:
             await interaction.response.send_message(
                 "this only works in a server 💀", ephemeral=True
@@ -319,9 +289,7 @@ class Levelling(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
-        config = await self.bot.config_collection.find_one(
-            {"guild_id": interaction.guild.id}
-        )
+        config = await self.bot.config_collection.find_one({"guild_id": interaction.guild.id})
         rewards = (config or {}).get("level_role_rewards", {})
 
         if action.value == "add":

@@ -14,11 +14,11 @@ Beneath her chaotic personality is a robust, multi-model AI architecture powered
 ## ✨ Core Features
 
 * **🧠 Multi-Model AI Brain:** Uses Google Gemini (2.0-flash & 1.5-flash-8b) as the primary engine, with automatic fallback to a rotating key system of Groq Llama models. Optionally supports a **custom fine-tuned model** via Together AI as a final last-resort fallback.
-* **⚡ Streaming Responses:** Replies stream token-by-token — the first chunk appears in ~500ms instead of waiting for the full response.
+* **⚡ Streaming Responses:** Replies stream token-by-token - the first chunk appears in ~500ms instead of waiting for the full response.
 * **🔧 Function Calling Tools:** Gemini can autonomously call tools (`web_search`, `get_time_in_timezone`, `calculate`) when needed, replacing the old regex-based search heuristic.
-* **💾 Dual-Layer Memory:** 30-day rolling chat history (auto-purged via MongoDB TTL) **plus** permanent long-term dossiers — Yuri summarizes old conversations so she remembers you forever without unbounded DB growth.
+* **💾 Dual-Layer Memory:** 30-day rolling chat history (auto-purged via MongoDB TTL) **plus** permanent long-term dossiers - Yuri summarizes old conversations so she remembers you forever without unbounded DB growth.
 * **👁️ Vision & Audio Processing:** Can "see" image attachments and transcribe voice notes using Groq's Whisper model.
-* **🔊 Voice Channel TTS:** Join a VC with `/vc join`, enable `/voice on`, and Yuri will speak her replies out loud — just @mention her normally, no `/say` needed.
+* **🔊 Voice Channel TTS:** Join a VC with `/vc join`, enable `/voice on`, and Yuri will speak her replies out loud - just @mention her normally, no `/say` needed.
 * **🎨 Image Generation:** `/imagine [prompt]` generates images via Google Imagen, with Yuri adding her own spin.
 * **🎭 Social & Drama Systems:** Anonymous confessions, secret crush matching, hot-or-not voting, starboard, personalized roasts based on profile + chat history.
 * **📊 Levelling & XP:** Messages earn XP, level-up role rewards, leaderboard, rank cards.
@@ -39,7 +39,7 @@ When one provider fails or hits a rate limit, Yuri automatically falls through t
 5. Together AI (fine-tuned)      ← Optional last resort
 ```
 
-Groq keys rotate proactively on every call (not just on failure), so load is spread evenly across all keys you provide. The Together AI tier only activates if `TOGETHER_API_KEY` and `FINETUNED_MODEL_NAME` are set — otherwise it is skipped silently.
+Groq keys rotate proactively on every call (not just on failure), so load is spread evenly across all keys you provide. The Together AI tier only activates if `TOGETHER_API_KEY` and `FINETUNED_MODEL_NAME` are set - otherwise it is skipped silently.
 
 ---
 
@@ -62,7 +62,7 @@ Yuri doesn't need commands to chat! Just `@mention` her or reply to one of her m
 * `/truth` - Get a spicy, chaotic teenage Truth question.
 * `/dare` - Get a chaotic Dare.
 * `/poll [question] [opt1] [opt2]` - Yuri hosts a poll and picks a side.
-* `/hotornot [description]` - Anonymous submission. Server judges you — verdict posted after 15 minutes. (10-min cooldown)
+* `/hotornot [description]` - Anonymous submission. Server judges you - verdict posted after 15 minutes. (10-min cooldown)
 * `/8ball [question]` - Magic 8-ball with 20 sassy responses.
 * `/avatar [@user]` - Show someone's full-size avatar with size links.
 
@@ -72,7 +72,7 @@ Yuri doesn't need commands to chat! Just `@mention` her or reply to one of her m
 
 ### 🔊 Voice
 * `/vc [join|leave]` - Make Yuri join or leave your voice channel.
-* `/voice [on|off|status]` - Toggle auto-speak. When ON (default), Yuri speaks her @mention replies in the VC — no `/say` needed.
+* `/voice [on|off|status]` - Toggle auto-speak. When ON (default), Yuri speaks her @mention replies in the VC - no `/say` needed.
 * `/say [text]` - Force Yuri to say something specific out loud in your voice channel. (10-sec cooldown)
 
 ### 🧠 Utility
@@ -106,7 +106,7 @@ All prefix commands are owner-restricted (`@commands.is_owner()`).
 * `!sync` - Syncs slash commands globally after any schema change.
 * `!health` - Detailed system health (ping, DB, AI providers, cog list).
 * `!stats` - Bot-wide usage statistics across all servers.
-* `!inbox` - Lists all feedback submissions (DM-only — prevents public leaks).
+* `!inbox` - Lists all feedback submissions (DM-only - prevents public leaks).
 * `!reply <user_id> <message>` - DMs a formatted response to a feedback submission.
 * `!fetchlog <user_id>` - Downloads a user's full conversation log (DM-only).
 * `!dailylog` - Downloads today's interaction log (DM-only).
@@ -123,11 +123,11 @@ All prefix commands are owner-restricted (`@commands.is_owner()`).
 * **AI APIs:**
   * `google-genai` (Gemini 2.0 Flash + Imagen 3)
   * `groq` (Llama 3.3 70B, Llama 4 Scout vision, Whisper STT, PlayAI TTS)
-  * `together` *(optional — fine-tuned model fallback)*
+  * `together` *(optional - fine-tuned model fallback)*
 * **Image Processing:** `Pillow` (PIL)
 * **Web Search:** `duckduckgo-search`
 * **TTS:** Groq PlayAI (primary) + gTTS (fallback)
-* **Error Tracking:** Sentry *(optional — `SENTRY_DSN`)*
+* **Error Tracking:** Sentry *(optional - `SENTRY_DSN`)*
 
 ---
 
@@ -208,18 +208,18 @@ OWNER_ID=                    # Your Discord user ID (integer)
 GEMINI_API_KEY=
 GROQ_API_KEY=
 
-# Optional — Groq key rotation
+# Optional - Groq key rotation
 GROQ_API_KEY_2=
 GROQ_API_KEY_3=
 
-# Optional — Fine-tuned model via Together AI
+# Optional - Fine-tuned model via Together AI
 TOGETHER_API_KEY=
 FINETUNED_MODEL_NAME=
 
-# Optional — Sentry error tracking
+# Optional - Sentry error tracking
 SENTRY_DSN=
 
-# Optional — Sharding (for large bots, >1000 servers)
+# Optional - Sharding (for large bots, >1000 servers)
 # SHARD_COUNT=1
 ```
 
@@ -234,7 +234,7 @@ SENTRY_DSN=
 | `GROQ_API_KEY` | ✅ | Primary Groq key (inference, Whisper STT, PlayAI TTS) |
 | `GROQ_API_KEY_2` … `_N` | ➖ | Extra Groq keys; round-robin load balancing |
 | `TOGETHER_API_KEY` | ➖ | Together AI key; omitting disables the fine-tuned tier |
-| `FINETUNED_MODEL_NAME` | ➖ | Together AI model ID — both vars must be set together |
+| `FINETUNED_MODEL_NAME` | ➖ | Together AI model ID - both vars must be set together |
 | `SENTRY_DSN` | ➖ | Sentry DSN for error tracking; omitting disables it |
 | `SHARD_COUNT` | ➖ | Number of shards; omit for auto-sharding |
 
@@ -290,7 +290,7 @@ black --check --diff .
 ```
 
 ### Running Tests
-No live credentials required — all external I/O is mocked.
+No live credentials required - all external I/O is mocked.
 
 ```bash
 # Run all 139 tests
@@ -332,10 +332,10 @@ Group adjacent messages into conversation pairs before uploading. Filter out any
 ### 2. Fine-Tune on Together AI
 1. Upload the JSONL dataset at [together.ai/fine-tuning](https://www.together.ai/fine-tuning).
 2. Select a Llama 3 base model and set Yuri's system prompt as the training system message.
-3. Start the job (typically 30–90 min for small datasets) and copy the resulting model name.
+3. Start the job (typically 30-90 min for small datasets) and copy the resulting model name.
 
 ### 3. Activate
-Add both vars to your `.env` and restart — no code changes needed:
+Add both vars to your `.env` and restart - no code changes needed:
 ```dotenv
 TOGETHER_API_KEY=your_key
 FINETUNED_MODEL_NAME=your-org/yuri-llama3-ft
@@ -356,14 +356,14 @@ FINETUNED_MODEL_NAME=your-org/yuri-llama3-ft
 | Voice TTS cog doesn't load | PyNaCl not installed | `pip install PyNaCl` (included in requirements.txt) |
 | `/imagine` fails | Imagen API not enabled on your Gemini key | Enable Imagen access in Google AI Studio |
 | `/say` or auto-speak silent | Bot lacks Speak permission in VC | Grant **Connect** + **Speak** permissions to Yuri's role |
-| `!inbox` / `!fetchlog` refuses to run | Run in a public channel | These are DM-only to prevent data leaks — DM the bot instead |
+| `!inbox` / `!fetchlog` refuses to run | Run in a public channel | These are DM-only to prevent data leaks - DM the bot instead |
 | `!wipeall` doesn't wipe | Missing `confirm` argument | Run `!wipeall confirm` (safety gate to prevent typos) |
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE.txt) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE.txt) file for details.
 
 ---
 

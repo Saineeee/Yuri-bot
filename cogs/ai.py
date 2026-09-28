@@ -1,89 +1,99 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
-
-import os
-import io
-import re
-import logging
 import asyncio
-import datetime
 import base64
-from typing import Optional
+import contextlib
+import datetime
+import io
+import logging
+import os
+import re
 
+import discord
+from discord import app_commands
+from discord.ext import commands
 from google import genai
 from google.genai import types
 from groq import AsyncGroq
 
 try:
     from together import AsyncTogether
+
     _TOGETHER_AVAILABLE = True
 except ImportError:
-    AsyncTogether = None      
+    AsyncTogether = None
     _TOGETHER_AVAILABLE = False
 
 import utils
-
 from cogs.prompts import SYSTEM_PROMPT
 
 log = logging.getLogger(__name__)
 
-USER_COOLDOWN_SECS   = 3     # minimum seconds between responses to the same user
-GUILD_COOLDOWN_SECS  = 1     # minimum seconds between responses in the same server
-MAX_INPUT_CHARS      = 2000  # hard cap on incoming message length
-MAX_HISTORY_MESSAGES = 40    # conversation turns loaded from MongoDB per request
-MAX_GROQ_TOKENS      = 256   # max tokens for all Groq completions
-MIN_SEARCH_LENGTH    = 15    # messages shorter than this never trigger a web search
+USER_COOLDOWN_SECS = 3
+GUILD_COOLDOWN_SECS = 1
+MAX_INPUT_CHARS = 2000
+MAX_HISTORY_MESSAGES = 40
+MAX_GROQ_TOKENS = 256
+MIN_SEARCH_LENGTH = 15
 
-# Streaming response tuning
-STREAM_FIRST_CHUNK_MIN_CHARS = 30    # don't send until we have at least this much
-STREAM_EDIT_INTERVAL_SECS    = 1.2   # min seconds between message edit
-STREAM_MAX_EDIT_INTERVAL_SECS = 0.8  # cap on how often we edit
+STREAM_FIRST_CHUNK_MIN_CHARS = 30
+STREAM_EDIT_INTERVAL_SECS = 1.2
 
+GEMINI_MODELS = [("gemini-2.0-flash", 1), ("gemini-1.5-flash-8b", 2)]
+
+# question-shaped phrases that pull fresh web results into the prompt before
+# generating (gemini can also call web_search itself via function calling)
 _SEARCH_TRIGGER_RE = re.compile(
-    r'\b('
-    r'who is|who are|who was|who were|'
-    r'what is|what are|what was|what were|what does|what did|'
-    r'where is|where are|where can|'
-    r'when is|when did|when does|when was|'
-    r'why is|why does|why did|'
-    r'how do|how does|how did|how can|how to|'
-    r'weather|price of|cost of|'
-    r'news|latest|current|today|right now|'
-    r'search for|look up|tell me about'
-    r')\b',
+    r"\b("
+    r"who is|who are|who was|who were|"
+    r"what is|what are|what was|what were|what does|what did|"
+    r"where is|where are|where can|"
+    r"when is|when did|when does|when was|"
+    r"why is|why does|why did|"
+    r"how do|how does|how did|how can|how to|"
+    r"weather|price of|cost of|"
+    r"news|latest|current|today|right now|"
+    r"search for|look up|tell me about"
+    r")\b",
     re.IGNORECASE,
 )
+
+# harassment/hate stay unfiltered so roasts land, the heavy categories don't
+SAFETY_SETTINGS = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+    ),
+]
 
 
 class AI(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-        # Gemini setup (New google-genai SDK)
         self.gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         self.gemini_config = types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
-            safety_settings=[
-                types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
-                types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=types.HarmBlockThreshold.BLOCK_NONE),
-                types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH),
-                types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH),
-            ]
+            safety_settings=SAFETY_SETTINGS,
         )
 
-        # Gemini config with function-calling tools
         try:
             from cogs.tools import get_tool_declarations
+
             tool_decls = get_tool_declarations()
             self.gemini_config_with_tools = types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
-                safety_settings=[
-                    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
-                    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=types.HarmBlockThreshold.BLOCK_NONE),
-                    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH),
-                    types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH),
-                ],
+                safety_settings=SAFETY_SETTINGS,
                 tools=[types.Tool(function_declarations=tool_decls)],
             )
             log.info("Loaded %d function-calling tool(s).", len(tool_decls))
@@ -91,7 +101,7 @@ class AI(commands.Cog):
             log.warning("Failed to load tools config, falling back to no-tools: %s", e)
             self.gemini_config_with_tools = self.gemini_config
 
-        # Groq multi-key setup
+        # groq keys rotate round-robin, GROQ_API_KEY_2, _3, ... all get used
         self.groq_keys: list[str] = []
         if os.getenv("GROQ_API_KEY"):
             self.groq_keys.append(os.getenv("GROQ_API_KEY"))
@@ -102,19 +112,19 @@ class AI(commands.Cog):
 
         self.current_groq_index = 0
         if self.groq_keys:
-            self.groq_client: Optional[AsyncGroq] = AsyncGroq(api_key=self.groq_keys[0])
+            self.groq_client: AsyncGroq | None = AsyncGroq(api_key=self.groq_keys[0])
             log.info("Loaded %d Groq API key(s).", len(self.groq_keys))
         else:
             self.groq_client = None
-            log.warning("No Groq keys found — Groq fallback unavailable.")
+            log.warning("No Groq keys found, Groq fallback unavailable.")
 
-        # Gemini per-model cooldown state
-        self.cooldowns:   dict[int, Optional[datetime.datetime]] = {1: None, 2: None}
-        self.fail_counts: dict[int, int]                         = {1: 0,    2: 0}
+        # layer -> cooldown-until / consecutive-failure count
+        self.cooldowns: dict[int, datetime.datetime | None] = {1: None, 2: None}
+        self.fail_counts: dict[int, int] = {1: 0, 2: 0}
 
-        # Together AI setup (fine-tuned model)
+        # optional fine-tuned model on Together as the last fallback tier
         together_key = os.getenv("TOGETHER_API_KEY")
-        self.finetuned_model: Optional[str] = os.getenv("FINETUNED_MODEL_NAME")
+        self.finetuned_model: str | None = os.getenv("FINETUNED_MODEL_NAME")
         if _TOGETHER_AVAILABLE and together_key and self.finetuned_model:
             self.together_client = AsyncTogether(api_key=together_key)
             log.info("Together AI loaded. Model: %s", self.finetuned_model)
@@ -126,23 +136,17 @@ class AI(commands.Cog):
                     "Run: pip install together"
                 )
 
-        self._user_cooldowns:  dict[int, datetime.datetime] = {}
+        self._user_cooldowns: dict[int, datetime.datetime] = {}
         self._guild_cooldowns: dict[int, datetime.datetime] = {}
 
-    # Private helpers
-
     def _cycle_groq_key(self, reason: str = "") -> None:
-        """Advance to the next Groq key in round-robin order and rebuild the client.
-
-        Consolidates the previous `_advance_groq_key` (proactive rotation) and
-        `_rotate_groq_key` (failure rotation) into one helper.
-        """
+        """Advance to the next Groq key in round-robin order and rebuild the client."""
         if len(self.groq_keys) <= 1:
             return
         self.current_groq_index = (self.current_groq_index + 1) % len(self.groq_keys)
         self.groq_client = AsyncGroq(api_key=self.groq_keys[self.current_groq_index])
         if reason:
-            log.info("Cycled Groq key → #%d (%s).", self.current_groq_index + 1, reason)
+            log.info("Cycled Groq key -> #%d (%s).", self.current_groq_index + 1, reason)
 
     def _is_user_on_cooldown(self, user_id: int) -> bool:
         now = datetime.datetime.now()
@@ -161,18 +165,15 @@ class AI(commands.Cog):
         return False
 
     async def _safe_typing_task(self, channel: discord.abc.Messageable):
-        """Runs the typing indicator safely in the background."""
         try:
             async with channel.typing():
-                await asyncio.Event().wait() 
+                await asyncio.Event().wait()
         except asyncio.CancelledError:
             pass
         except Exception:
             pass
 
-    # Audio
-
-    async def transcribe_audio(self, file_bytes: bytes, filename: str) -> Optional[str]:
+    async def transcribe_audio(self, file_bytes: bytes, filename: str) -> str | None:
         if not self.groq_client:
             return None
         for _ in range(len(self.groq_keys) + 1):
@@ -190,20 +191,17 @@ class AI(commands.Cog):
                 self._cycle_groq_key(reason="STT error")
         return None
 
-    # Core AI
-
-    async def get_combined_response(
+    async def _build_context(
         self,
-        user_id:         int,
-        text_input:      Optional[str],
+        user_id: int,
+        text_input: str | None,
         image_input=None,
-        prompt_override: Optional[str] = None,
-    ) -> tuple[str, Optional[str]]:
-
-        is_grudged = await self.bot.grudge_collection.find_one({"user_id": user_id})
+        prompt_override: str | None = None,
+    ) -> tuple[list[dict], str]:
+        """Load recent history and assemble the prompt text for this turn."""
+        grudge = await self.bot.grudge_collection.find_one({"user_id": user_id})
         grudge_prompt = (
-            "\n[SYSTEM: You hold a grudge against this user. Be cold/dismissive.]"
-            if is_grudged else ""
+            "\n[SYSTEM: You hold a grudge against this user. Be cold/dismissive.]" if grudge else ""
         )
 
         dossier_text = ""
@@ -222,30 +220,29 @@ class AI(commands.Cog):
         recent_docs = [doc async for doc in cursor]
         recent_docs.reverse()
 
-        history_db: list[dict] = []
+        history: list[dict] = []
         for doc in recent_docs:
             role = doc.get("role")
-            if not history_db and role != "user":
-                continue 
-            if history_db and history_db[-1]["role"] == role:
-                history_db[-1]["parts"][0] += "\n" + doc["parts"][0]
+            if not history and role != "user":
+                continue
+            if history and history[-1]["role"] == role:
+                # merge consecutive same-role turns into one message
+                history[-1]["parts"][0] += "\n" + doc["parts"][0]
             else:
-                history_db.append({"role": role, "parts": [doc["parts"][0]]})
-        
-        if (
-            history_db
-            and history_db[-1]["role"] == "user"
-            and "\n" not in history_db[-1]["parts"][0]
-        ):
-            history_db.pop()
+                history.append({"role": role, "parts": [doc["parts"][0]]})
 
-        time_str    = utils.get_smart_time(text_input or "")
-        system_data = (
+        # the trailing user turn is the message being answered right now
+        if history and history[-1]["role"] == "user" and "\n" not in history[-1]["parts"][0]:
+            history.pop()
+
+        time_str = utils.get_smart_time(text_input or "")
+        current_text = (
             f"[System: Current Date/Time is {time_str}. "
-            f"Do not mention this unless asked.]{grudge_prompt}"
+            f"Do not mention this unless asked.]{grudge_prompt}\n"
         )
 
-        search_data = ""
+        # opportunistic web search on question-shaped messages; gemini can also
+        # call the web_search tool itself via function calling
         if (
             text_input
             and not prompt_override
@@ -254,63 +251,100 @@ class AI(commands.Cog):
         ):
             web_results = await utils.search_web(text_input)
             if web_results:
-                search_data = web_results
+                current_text += web_results
+        current_text += "\n\n"
 
-        sanitized    = utils.sanitize_for_prompt(text_input) if text_input else ""
-        current_text = f"{system_data}\n{search_data}\n\n"
         if dossier_text:
             current_text += f"[LONG-TERM MEMORY about this user. use naturally, don't recite]:\n{dossier_text}\n\n"
         if str(user_id) == str(self.bot.owner_id):
-            current_text += "(System: User is your creator 'Saine'. Be cool.) " # idk why i added this
+            current_text += (
+                "(System: User is your creator 'Saine'. Be cool.) "  # idk why i added this
+            )
 
         if prompt_override:
             current_text += f"{prompt_override} (Reply as Yuri.)"
         else:
+            sanitized = utils.sanitize_for_prompt(text_input) if text_input else ""
             if sanitized:
                 current_text += f"[USER_INPUT]{sanitized}[/USER_INPUT]"
             if image_input:
                 current_text += " (User sent an image. Roast it or comment on it.)"
 
-        response_text = ""
-        successful    = False
-        now           = datetime.datetime.now()
+        return history, current_text
 
-        for layer in self.cooldowns:
-            if self.cooldowns[layer] and now > self.cooldowns[layer]:
-                self.cooldowns[layer] = None
-
-        gemini_history = []
-        for m in history_db:
-            gemini_history.append(
-                types.Content(role=m["role"], parts=[types.Part.from_text(text=m["parts"][0])])
-            )
-
-        new_parts = [types.Part.from_text(text=current_text)]
+    @staticmethod
+    def _turn_parts(current_text: str, image_input) -> list:
+        parts = [types.Part.from_text(text=current_text)]
         if image_input:
             buf = io.BytesIO()
             if image_input.mode != "RGB":
                 image_input = image_input.convert("RGB")
             image_input.save(buf, format="JPEG")
-            new_parts.append(
-                types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg")
-            )
-        
-        gemini_history.append(types.Content(role="user", parts=new_parts))
+            parts.append(types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg"))
+        return parts
 
-        for model_name, layer in [("gemini-2.0-flash", 1), ("gemini-1.5-flash-8b", 2)]:
+    async def _save_turn(self, user_id: int, text_input, clean_text: str, gif_url) -> None:
+        """Persist this exchange so the next turn has history."""
+        timestamp = utils.utcnow()
+        await self.bot.chat_collection.insert_one(
+            {
+                "user_id": user_id,
+                "role": "user",
+                "parts": [text_input or "[Image]"],
+                "timestamp": timestamp,
+            }
+        )
+        await self.bot.chat_collection.insert_one(
+            {
+                "user_id": user_id,
+                "role": "model",
+                "parts": [clean_text or f"[GIF: {gif_url}]"],
+                "timestamp": timestamp,
+            }
+        )
+
+    async def get_combined_response(
+        self,
+        user_id: int,
+        text_input: str | None,
+        image_input=None,
+        prompt_override: str | None = None,
+    ) -> tuple[str, str | None]:
+        history_db, current_text = await self._build_context(
+            user_id, text_input, image_input, prompt_override
+        )
+
+        now = datetime.datetime.now()
+        for layer in self.cooldowns:
+            if self.cooldowns[layer] and now > self.cooldowns[layer]:
+                self.cooldowns[layer] = None
+
+        gemini_history = [
+            types.Content(role=m["role"], parts=[types.Part.from_text(text=m["parts"][0])])
+            for m in history_db
+        ]
+        gemini_history.append(
+            types.Content(role="user", parts=self._turn_parts(current_text, image_input))
+        )
+
+        response_text = ""
+        successful = False
+
+        for model_name, layer in GEMINI_MODELS:
             if successful:
                 break
             if not self.cooldowns[layer]:
                 try:
-                    if not prompt_override and layer == 1:
-                        cfg = self.gemini_config_with_tools
-                    else:
-                        cfg = self.gemini_config
+                    cfg = (
+                        self.gemini_config_with_tools
+                        if not prompt_override and layer == 1
+                        else self.gemini_config
+                    )
 
                     response = await self.gemini_client.aio.models.generate_content(
                         model=model_name,
                         contents=gemini_history,
-                        config=cfg
+                        config=cfg,
                     )
 
                     response_text = await self._handle_function_calls(
@@ -318,11 +352,12 @@ class AI(commands.Cog):
                     )
                     if not response_text:
                         response_text = response.text
-                    successful    = True
+                    successful = True
                     self.fail_counts[layer] = 0
                 except Exception as e:
                     log.warning("Gemini layer %d error: %s", layer, e)
                     self.fail_counts[layer] += 1
+                    # one failure parks the layer for a minute, two for a day
                     wait = (
                         datetime.timedelta(minutes=1)
                         if self.fail_counts[layer] < 2
@@ -338,35 +373,21 @@ class AI(commands.Cog):
         clean_text, gif_url = await utils.process_gif_tags(response_text)
 
         if not prompt_override:
-            user_save  = text_input or "[Image]"
-            model_save = clean_text or f"[GIF: {gif_url}]"
-            timestamp  = utils.utcnow()
-            await self.bot.chat_collection.insert_one(
-                {"user_id": user_id, "role": "user",  "parts": [user_save],  "timestamp": timestamp}
-            )
-            await self.bot.chat_collection.insert_one(
-                {"user_id": user_id, "role": "model", "parts": [model_save], "timestamp": timestamp}
-            )
+            await self._save_turn(user_id, text_input, clean_text, gif_url)
 
         return clean_text, gif_url
 
     async def get_combined_response_streaming(
         self,
-        user_id:         int,
-        text_input:      Optional[str],
+        user_id: int,
+        text_input: str | None,
         image_input=None,
-        prompt_override: Optional[str] = None,
+        prompt_override: str | None = None,
     ):
-        """Streaming version of get_combined_response.
+        """Yields (partial_text, gif_url) as the response generates.
 
-        Yields (partial_text, gif_url) tuples as the response is generated.
-        The final yield contains the complete text. Falls back to the
-        non-streaming path (and yields a single complete chunk) if the
-        streaming API is unavailable or fails.
-
-        gif_url is only set on the FINAL yield (intermediate yields have
-        gif_url=None) because [GIF: ...] tags are extracted from the
-        complete text.
+        Falls back to non-streaming (single complete chunk) if streaming fails.
+        gif_url only arrives on the final yield, [GIF:] tags need full text.
         """
         try:
             async for chunk in self._stream_gemini(
@@ -384,111 +405,30 @@ class AI(commands.Cog):
 
     async def _stream_gemini(
         self,
-        user_id:         int,
-        text_input:      Optional[str],
+        user_id: int,
+        text_input: str | None,
         image_input=None,
-        prompt_override: Optional[str] = None,
+        prompt_override: str | None = None,
     ):
-        """Stream tokens from Gemini 2.0 Flash. Yields (partial, None) chunks.
-
-        Raises on failure so the caller can fall back to non-streaming.
-        """
-        is_grudged = await self.bot.grudge_collection.find_one({"user_id": user_id})
-        grudge_prompt = (
-            "\n[SYSTEM: You hold a grudge against this user. Be cold/dismissive.]"
-            if is_grudged else ""
+        """Stream tokens from Gemini 2.0 Flash. Raises so the caller can fall back."""
+        history_db, current_text = await self._build_context(
+            user_id, text_input, image_input, prompt_override
         )
-
-        dossier_text = ""
-        memory_cog = self.bot.get_cog("MemorySummarizer")
-        if memory_cog is not None:
-            try:
-                dossier_text = await memory_cog.get_user_dossier_text(user_id)
-            except Exception as e:
-                log.warning("Failed to fetch long-term dossier (stream): %s", e)
-
-        cursor = (
-            self.bot.chat_collection.find({"user_id": user_id})
-            .sort("timestamp", -1)
-            .limit(MAX_HISTORY_MESSAGES)
-        )
-        recent_docs = [doc async for doc in cursor]
-        recent_docs.reverse()
-
-        history_db: list[dict] = []
-        for doc in recent_docs:
-            role = doc.get("role")
-            if not history_db and role != "user":
-                continue
-            if history_db and history_db[-1]["role"] == role:
-                history_db[-1]["parts"][0] += "\n" + doc["parts"][0]
-            else:
-                history_db.append({"role": role, "parts": [doc["parts"][0]]})
-
-        if (
-            history_db
-            and history_db[-1]["role"] == "user"
-            and "\n" not in history_db[-1]["parts"][0]
-        ):
-            history_db.pop()
-
-        time_str    = utils.get_smart_time(text_input or "")
-        system_data = (
-            f"[System: Current Date/Time is {time_str}. "
-            f"Do not mention this unless asked.]{grudge_prompt}"
-        )
-
-        search_data = ""
-        if (
-            text_input
-            and not prompt_override
-            and len(text_input) >= MIN_SEARCH_LENGTH
-            and _SEARCH_TRIGGER_RE.search(text_input)
-        ):
-            web_results = await utils.search_web(text_input)
-            if web_results:
-                search_data = web_results
-
-        sanitized    = utils.sanitize_for_prompt(text_input) if text_input else ""
-        current_text = f"{system_data}\n{search_data}\n\n"
-        if dossier_text:
-            current_text += f"[LONG-TERM MEMORY about this user. use naturally, don't recite]:\n{dossier_text}\n\n"
-        if str(user_id) == str(self.bot.owner_id):
-            current_text += "(System: User is your creator 'Sane'. Be cool.) " # again idk
-
-        if prompt_override:
-            current_text += f"{prompt_override} (Reply as Yuri.)"
-        else:
-            if sanitized:
-                current_text += f"[USER_INPUT]{sanitized}[/USER_INPUT]"
-            if image_input:
-                current_text += " (User sent an image. Roast it or comment on it.)"
 
         now = datetime.datetime.now()
         for layer in self.cooldowns:
             if self.cooldowns[layer] and now > self.cooldowns[layer]:
                 self.cooldowns[layer] = None
-
-        # Check if primary Gemini layer is available
         if self.cooldowns[1]:
             raise RuntimeError(f"Gemini layer 1 on cooldown until {self.cooldowns[1]}")
 
-        gemini_history = []
-        for m in history_db:
-            gemini_history.append(
-                types.Content(role=m["role"], parts=[types.Part.from_text(text=m["parts"][0])])
-            )
-
-        new_parts = [types.Part.from_text(text=current_text)]
-        if image_input:
-            buf = io.BytesIO()
-            if image_input.mode != "RGB":
-                image_input = image_input.convert("RGB")
-            image_input.save(buf, format="JPEG")
-            new_parts.append(
-                types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg")
-            )
-        gemini_history.append(types.Content(role="user", parts=new_parts))
+        gemini_history = [
+            types.Content(role=m["role"], parts=[types.Part.from_text(text=m["parts"][0])])
+            for m in history_db
+        ]
+        gemini_history.append(
+            types.Content(role="user", parts=self._turn_parts(current_text, image_input))
+        )
 
         response_text = ""
         stream = await self.gemini_client.aio.models.generate_content_stream(
@@ -504,15 +444,7 @@ class AI(commands.Cog):
         clean_text, gif_url = await utils.process_gif_tags(response_text)
 
         if not prompt_override:
-            user_save  = text_input or "[Image]"
-            model_save = clean_text or f"[GIF: {gif_url}]"
-            timestamp  = utils.utcnow()
-            await self.bot.chat_collection.insert_one(
-                {"user_id": user_id, "role": "user",  "parts": [user_save],  "timestamp": timestamp}
-            )
-            await self.bot.chat_collection.insert_one(
-                {"user_id": user_id, "role": "model", "parts": [model_save], "timestamp": timestamp}
-            )
+            await self._save_turn(user_id, text_input, clean_text, gif_url)
 
         self.fail_counts[1] = 0
         yield clean_text, gif_url
@@ -524,15 +456,10 @@ class AI(commands.Cog):
         model_name: str,
         cfg,
     ) -> str:
-        """Process any function calls in *response* and re-generate.
+        """Run any function calls Gemini made, feed the results back, re-generate.
 
-        Gemini may return a response containing FunctionCall parts instead of
-        text. We dispatch each call to the matching tool handler, append the
-        FunctionResponse parts to the history, and re-generate. Loops up to 3
-        times to handle chained tool calls.
-
-        Returns the final text response, or empty string if no function calls
-        were made (caller should use response.text directly).
+        Loops up to 3 times for chained tool calls. Returns "" when the response
+        had no function calls, the caller then uses response.text directly.
         """
         try:
             from cogs.tools import dispatch_tool
@@ -563,10 +490,12 @@ class AI(commands.Cog):
                 log.info("tool call: %s(%s)", tool_name, tool_args)
                 result = await dispatch_tool(tool_name, tool_args)
 
-                response_parts.append(types.Part.from_function_response(
-                    name=tool_name,
-                    response={"result": result},
-                ))
+                response_parts.append(
+                    types.Part.from_function_response(
+                        name=tool_name,
+                        response={"result": result},
+                    )
+                )
 
             gemini_history.append(types.Content(role="model", parts=function_calls))
             gemini_history.append(types.Content(role="user", parts=response_parts))
@@ -599,15 +528,15 @@ class AI(commands.Cog):
 
     async def call_groq_fallback(
         self,
-        history:    list[dict],
+        history: list[dict],
         sys_prompt: str,
-        msg:        str,
+        msg: str,
         img=None,
     ) -> str:
         if not self.groq_client:
             return "server dead rn. try again later"
 
-        # Proactive round-robin rotation: spread load evenly across all keys
+        # rotate proactively so load spreads over all keys
         self._cycle_groq_key()
 
         messages: list[dict] = [{"role": "system", "content": sys_prompt}]
@@ -621,23 +550,29 @@ class AI(commands.Cog):
                 img.thumbnail((1024, 1024))
             if img.mode != "RGB":
                 img = img.convert("RGB")
-            buf     = io.BytesIO()
+            buf = io.BytesIO()
             img.save(buf, format="JPEG")
             img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-            messages.append({
-                "role": "user",
-                "content": [
-                    {"type": "text",      "text": msg},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
-                ],
-            })
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": msg},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
+                        },
+                    ],
+                }
+            )
         else:
             messages.append({"role": "user", "content": msg})
 
         for _ in range(len(self.groq_keys) + 1):
             try:
                 model = (
-                    "meta-llama/llama-4-scout-17b-16e-instruct" if img
+                    "meta-llama/llama-4-scout-17b-16e-instruct"
+                    if img
                     else "llama-3.3-70b-versatile"
                 )
                 comp = await self.groq_client.chat.completions.create(
@@ -649,7 +584,8 @@ class AI(commands.Cog):
                     "Groq %s failed (key #%d): %s: %s",
                     "vision" if img else "70b",
                     self.current_groq_index + 1,
-                    type(e).__name__, e,
+                    type(e).__name__,
+                    e,
                 )
                 if not img:
                     try:
@@ -662,9 +598,10 @@ class AI(commands.Cog):
                     except Exception as e2:
                         log.warning(
                             "Groq 8B failed (key #%d): %s",
-                            self.current_groq_index + 1, e2,
+                            self.current_groq_index + 1,
+                            e2,
                         )
-                # Rotate to next key on failure; break out if we only have one
+                # next key, or give up if there's only one
                 if len(self.groq_keys) <= 1:
                     break
                 self._cycle_groq_key(reason="fallback failure")
@@ -681,24 +618,18 @@ class AI(commands.Cog):
 
         return "the ai is down rn, wait like 12 hours (rate limits) 💀"
 
-    # Events
-
     async def _stream_response_to_message(
         self,
         message: discord.Message,
         user_id: int,
         final_text: str,
         img_data,
-    ) -> tuple[str, Optional[str]]:
-        """Stream an AI response to a Discord message.
+    ) -> tuple[str, str | None]:
+        """Stream a reply into a Discord message, editing as chunks arrive.
 
-        Sends the first chunk as soon as STREAM_FIRST_CHUNK_MIN_CHARS are
-        available, then edits the message every STREAM_EDIT_INTERVAL_SECS.
-        If the response fits in a single message (< 2000 chars) the final
-        edit contains the complete text. If it exceeds 2000 chars, falls
-        back to send_chunked_reply with the complete text.
-
-        Returns (final_text, gif_url) so the caller can post the GIF embed.
+        First chunk goes out once STREAM_FIRST_CHUNK_MIN_CHARS are in, edits are
+        throttled to one per STREAM_EDIT_INTERVAL_SECS, and anything over 2000
+        chars falls back to send_chunked_reply. Returns (text, gif_url).
         """
         sent_msg = None
         last_edit_time = 0.0
@@ -712,23 +643,20 @@ class AI(commands.Cog):
             full_text = partial_text
             if gif_url is not None:
                 final_gif_url = gif_url
-                full_text = partial_text
                 break
 
             if not first_chunk_sent:
                 if len(partial_text) < STREAM_FIRST_CHUNK_MIN_CHARS:
                     continue
                 try:
-                    sent_msg = await message.reply(
-                        partial_text, mention_author=True
-                    )
+                    sent_msg = await message.reply(partial_text, mention_author=True)
                     first_chunk_sent = True
                     last_edit_time = asyncio.get_event_loop().time()
                 except discord.HTTPException:
                     pass
                 continue
 
-            # Rate-limit subsequent edits
+            # don't edit more often than the interval allows
             now = asyncio.get_event_loop().time()
             elapsed = now - last_edit_time
             if elapsed < STREAM_EDIT_INTERVAL_SECS:
@@ -748,29 +676,18 @@ class AI(commands.Cog):
             return full_text, final_gif_url
 
         if len(full_text) > 2000:
-            try:
+            with contextlib.suppress(discord.HTTPException):
                 await sent_msg.delete()
-            except discord.HTTPException:
-                pass
             await utils.send_chunked_reply(message, full_text, mention_user=True)
             return full_text, final_gif_url
 
-        try:
+        with contextlib.suppress(discord.HTTPException):
             await sent_msg.edit(content=full_text)
-        except discord.HTTPException:
-            pass
 
         return full_text, final_gif_url
 
     async def _maybe_auto_speak(self, guild_id: int, text: str) -> None:
-        """If voice mode is on and Yuri is in a VC, speak the text response.
-
-        Called after every text reply to a @mention or reply. Silently no-ops if:
-          - The VoiceTTS cog isn't loaded (PyNaCl missing)
-          - Voice mode is off for this guild
-          - Yuri isn't in a VC in this guild
-          - The text is empty (e.g. GIF-only response)
-        """
+        """Speak the reply in the guild VC when voice mode is on, else no-op."""
         voice_cog = self.bot.get_cog("VoiceTTS")
         if voice_cog is None:
             return
@@ -786,9 +703,7 @@ class AI(commands.Cog):
             if not text or not text.strip():
                 return
 
-            self.bot.loop.create_task(
-                voice_cog.speak_in_guild_vc(guild_id, text)
-            )
+            self.bot.loop.create_task(voice_cog.speak_in_guild_vc(guild_id, text))
         except Exception as e:
             log.warning("auto-speak hook failed for guild %s: %s", guild_id, e)
 
@@ -813,19 +728,22 @@ class AI(commands.Cog):
 
         try:
             typing_task = asyncio.create_task(self._safe_typing_task(message.channel))
-            
             try:
-                user_id    = message.author.id
+                user_id = message.author.id
                 clean_text = message.content.replace(f"<@{self.bot.user.id}>", "").strip()
-                img_data   = None
+                img_data = None
                 voice_text = ""
 
                 for att in message.attachments:
                     fname = att.filename.lower()
-                    if not img_data and any(fname.endswith(x) for x in ["png", "jpg", "jpeg", "webp"]):
+                    if not img_data and any(
+                        fname.endswith(x) for x in ["png", "jpg", "jpeg", "webp"]
+                    ):
                         img_data = await utils.get_image_from_url(att.url)
-                    elif not voice_text and any(fname.endswith(x) for x in ["ogg", "mp3", "wav", "m4a"]):
-                        file_bytes  = await att.read()
+                    elif not voice_text and any(
+                        fname.endswith(x) for x in ["ogg", "mp3", "wav", "m4a"]
+                    ):
+                        file_bytes = await att.read()
                         transcribed = await self.transcribe_audio(file_bytes, fname)
                         if transcribed:
                             voice_text = f'\n[User Voice Note]: "{transcribed}"'
@@ -854,18 +772,13 @@ class AI(commands.Cog):
                 embed.set_image(url=gif_url)
                 await message.channel.send(embed=embed)
 
-            # Auto speak hook
             if message.guild is not None:
                 await self._maybe_auto_speak(message.guild.id, resp_text)
 
         except Exception as e:
             log.exception("on_message error for user %s: %s", message.author.id, e)
-            try:
+            with contextlib.suppress(Exception):
                 await message.reply("something broke rn try again")
-            except Exception:
-                pass
-
-    # Slash commands
 
     @app_commands.command(name="ask", description="Ask Yuri a Yes/No question.")
     async def ask(self, interaction: discord.Interaction, question: str) -> None:
@@ -887,9 +800,7 @@ class AI(commands.Cog):
     @app_commands.command(name="rename", description="Give someone a chaotic nickname.")
     async def rename(self, interaction: discord.Interaction, member: discord.Member) -> None:
         if not interaction.guild:
-            await interaction.response.send_message(
-                "this only works in a server", ephemeral=True
-            )
+            await interaction.response.send_message("this only works in a server", ephemeral=True)
             return
 
         await interaction.response.defer()

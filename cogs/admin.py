@@ -1,11 +1,11 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
+import datetime
 import io
 import json
-import datetime
-import asyncio
 import logging
+
+import discord
+from discord import app_commands
+from discord.ext import commands
 
 import utils
 
@@ -22,19 +22,23 @@ class Admin(commands.Cog):
     @commands.is_owner()
     async def health(self, ctx):
         """Owner-only: detailed system health with all internals."""
-        start = datetime.datetime.now(datetime.timezone.utc)
+        start = datetime.datetime.now(datetime.UTC)
         try:
-            await self.bot.mongo.admin.command('ping')
+            await self.bot.mongo.admin.command("ping")
             db_status = "✅ Connected"
         except Exception as e:
             db_status = f"❌ Failed: {e}"
 
-        db_latency = (datetime.datetime.now(datetime.timezone.utc) - start).total_seconds() * 1000
+        db_latency = (datetime.datetime.now(datetime.UTC) - start).total_seconds() * 1000
 
         ai_cog = self.bot.get_cog("AI")
         groq_status = "✅ Active" if ai_cog and ai_cog.groq_client else "❌ Inactive"
         gemini_status = "✅ Active" if ai_cog and ai_cog.gemini_client else "❌ Inactive"
-        together_status = "✅ Active" if ai_cog and getattr(ai_cog, 'together_client', None) else "➖ Not configured"
+        together_status = (
+            "✅ Active"
+            if ai_cog and getattr(ai_cog, "together_client", None)
+            else "➖ Not configured"
+        )
 
         loaded_cogs = [name for name, cog in self.bot.cogs.items() if cog is not None]
 
@@ -65,11 +69,11 @@ class Admin(commands.Cog):
         """Public slash command: minimal status check."""
         db_ok = True
         try:
-            await self.bot.mongo.admin.command('ping')
+            await self.bot.mongo.admin.command("ping")
         except Exception:
             db_ok = False
-            
-        gateway_ok = self.bot.latency != float('inf')
+
+        gateway_ok = self.bot.latency != float("inf")
 
         if db_ok and gateway_ok:
             embed = discord.Embed(
@@ -89,8 +93,7 @@ class Admin(commands.Cog):
             embed = discord.Embed(
                 title="⚠️ Degraded Performance",
                 description=(
-                    "some things aren't working rn"
-                    "the dev has been notified, try again in a bit."
+                    "some things aren't working rn" "the dev has been notified, try again in a bit."
                 ),
                 color=discord.Color.orange(),
                 timestamp=utils.utcnow(),
@@ -98,22 +101,21 @@ class Admin(commands.Cog):
             embed.set_footer(text="Yuri Bot • /status")
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
-            # Log the specifics for the dev
             log.warning("status check failed: issues=%s", issues)
-
-    # Slash commands
 
     @app_commands.command(name="setup", description="Admin: Set confession channel.")
     async def setup(self, interaction: discord.Interaction, channel: discord.TextChannel):
         if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("You have to be the server owner or admin to use this command", ephemeral=True)
+            await interaction.response.send_message(
+                "You have to be the server owner or admin to use this command", ephemeral=True
+            )
             return
 
         await interaction.response.defer(ephemeral=True)
         await self.bot.config_collection.update_one(
             {"guild_id": interaction.guild_id},
             {"$set": {"confession_channel_id": channel.id}},
-            upsert=True
+            upsert=True,
         )
         await interaction.followup.send(f"✅ Confessions set to {channel.mention}!")
 
@@ -133,7 +135,7 @@ class Admin(commands.Cog):
     async def ungrudge(self, interaction: discord.Interaction, member: discord.Member):
         await interaction.response.defer(ephemeral=True)
         await self.bot.grudge_collection.delete_one({"user_id": member.id})
-        await interaction.followup.send(f"⭐️ **Forgiven.**")
+        await interaction.followup.send("⭐️ **Forgiven.**")
 
     @app_commands.command(name="wipe", description="Admin: Wipe user memory.")
     async def wipe(self, interaction: discord.Interaction, member: discord.Member):
@@ -149,7 +151,9 @@ class Admin(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         result = await self.bot.chat_collection.delete_many({"user_id": interaction.user.id})
         if result.deleted_count == 0:
-            await interaction.followup.send("i literally don't remember anything about you already 💀")
+            await interaction.followup.send(
+                "i literally don't remember anything about you already 💀"
+            )
         else:
             await interaction.followup.send("✅ done. who are you again? i forgor 🫠🙏")
 
@@ -158,18 +162,12 @@ class Admin(commands.Cog):
         description="Download your full chat history with Yuri (GDPR data portability).",
     )
     async def export(self, interaction: discord.Interaction):
-        """Lets any user export their own conversation data as a JSON file.
-
-        Implements the GDPR Article 20 right to data portability that the
-        privacy policy implies (deletion is already provided by /clearhistory).
-        """
+        """DM the user their full chat history as a JSON file."""
         await interaction.response.defer(ephemeral=True)
 
-        cursor = (
-            self.bot.chat_collection
-            .find({"user_id": interaction.user.id}, {"_id": 0, "user_id": 0})
-            .sort("timestamp", 1)
-        )
+        cursor = self.bot.chat_collection.find(
+            {"user_id": interaction.user.id}, {"_id": 0, "user_id": 0}
+        ).sort("timestamp", 1)
 
         records = []
         async for doc in cursor:
@@ -187,9 +185,9 @@ class Admin(commands.Cog):
 
         payload = {
             "exported_at": utils.utcnow().isoformat(),
-            "user_id":     interaction.user.id,
+            "user_id": interaction.user.id,
             "record_count": len(records),
-            "records":     records,
+            "records": records,
         }
         data = json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
 
@@ -199,11 +197,11 @@ class Admin(commands.Cog):
                     io.BytesIO(data),
                     filename=f"yuri_data_export_{interaction.user.id}.json",
                 ),
-                content=f"⬇️ Here's your data export — {len(records)} records. "
-                        f"Use `/clearhistory` if you want to delete it all.",
+                content=f"⬇️ Here's your data export: {len(records)} records. "
+                f"Use `/clearhistory` if you want to delete it all.",
             )
             await interaction.followup.send(
-                "✅ check your DMs — i sent your data export there.", ephemeral=True
+                "✅ check your DMs, i sent your data export there.", ephemeral=True
             )
         except discord.Forbidden:
             await interaction.followup.send(
@@ -215,42 +213,41 @@ class Admin(commands.Cog):
         name="privacy",
         description="Control what data Yuri uses about you (presence, dossier, etc).",
     )
-    @app_commands.choices(setting=[
-        app_commands.Choice(name="Presence: Allow (default)", value="presence_allow"),
-        app_commands.Choice(name="Presence: Hide",           value="presence_hide"),
-    ])
+    @app_commands.choices(
+        setting=[
+            app_commands.Choice(name="Presence: Allow (default)", value="presence_allow"),
+            app_commands.Choice(name="Presence: Hide", value="presence_hide"),
+        ]
+    )
     async def privacy(
         self,
         interaction: discord.Interaction,
         setting: app_commands.Choice[str],
     ):
-        """Lets a user opt out of rich-presence data collection.
-
-        When set to 'presence_hide', the /roast /rate /ship /compatibility
-        commands will skip Spotify/game/custom-status info from the user's
-        dossier when shipping it to the AI provider.
-        """
+        """Toggle whether presence data is included in the user's dossier."""
         await interaction.response.defer(ephemeral=True)
 
-        include_presence = (setting.value == "presence_allow")
+        include_presence = setting.value == "presence_allow"
         await self.bot.privacy_collection.update_one(
             {"user_id": interaction.user.id},
-            {"$set": {
-                "include_presence": include_presence,
-                "updated_at":       utils.utcnow(),
-            }},
+            {
+                "$set": {
+                    "include_presence": include_presence,
+                    "updated_at": utils.utcnow(),
+                }
+            },
             upsert=True,
         )
 
         if include_presence:
             msg = "✅ Presence data is now **shared** with the AI when roasting / rating you (default)."
         else:
-            msg = ("ℹ️ Presence data is now **hidden**. /roast, /rate, /ship, /compatibility "
-                   "will not include your Spotify songs, games, or custom status.")
+            msg = (
+                "ℹ️ Presence data is now **hidden**. /roast, /rate, /ship, /compatibility "
+                "will not include your Spotify songs, games, or custom status."
+            )
 
         await interaction.followup.send(msg, ephemeral=True)
-
-    # Owner prefix commands
 
     @commands.command(name="stats")
     @commands.is_owner()
@@ -286,22 +283,14 @@ class Admin(commands.Cog):
     @commands.command(name="wipeall")
     @commands.is_owner()
     async def wipe_all(self, ctx):
-        """Owner only: Wipe ALL chat history across ALL servers.
-
-        Now requires a confirmation step to prevent catastrophic typos.
-        Usage:
-            !wipeall            → asks for confirmation
-            !wipeall confirm    → actually wipes
-        """
-        
+        """Owner only: wipe ALL chat history. Requires '!wipeall confirm'."""
         if not ctx.message.content.strip().lower().endswith("confirm"):
             await ctx.send(
                 "⚠️ **SYSTEM PURGE REQUESTED.**\n"
                 "This will permanently delete **EVERY user's** chat history "
                 "across **ALL servers**.\n\n"
-                "To confirm, run: `!wipeall confirm` within 30 seconds."
+                "To confirm, run: `!wipeall confirm`."
             )
-
             return
 
         await self.bot.chat_collection.delete_many({})
@@ -326,7 +315,7 @@ class Admin(commands.Cog):
         cursor = self.bot.chat_collection.find({"user_id": user_id}).sort("timestamp", 1)
         log_text = ""
         async for doc in cursor:
-            role = "YURI" if doc['role'] == "model" else "USER"
+            role = "YURI" if doc["role"] == "model" else "USER"
             log_text += f"[{doc['timestamp']}] {role}: {doc['parts'][0]}\n"
 
         if not log_text:
@@ -355,8 +344,8 @@ class Admin(commands.Cog):
         log_text = f"DAILY DIAGNOSTIC LOG: {start.date()}\n" + "=" * 40 + "\n"
         count = 0
         async for doc in cursor:
-            name = doc['user_id']
-            msg = str(doc['parts'][0]).replace('\n', ' ')
+            name = doc["user_id"]
+            msg = str(doc["parts"][0]).replace("\n", " ")
             log_text += f"[{doc['timestamp'].strftime('%H:%M')}] {name}: {msg[:50]}\n"
             count += 1
 
@@ -415,7 +404,9 @@ class Admin(commands.Cog):
                 color=discord.Color.from_rgb(255, 105, 180),
                 timestamp=utils.utcnow(),
             )
-            embed.set_footer(text="Pls Don't reply to this message, if there's anything else then use /feedback once again")
+            embed.set_footer(
+                text="Pls Don't reply to this message, if there's anything else then use /feedback once again"
+            )
 
             await target.send(embed=embed)
             await ctx.send(f"✅ Reply sent to **{target.name}**!")

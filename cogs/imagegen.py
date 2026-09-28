@@ -1,19 +1,17 @@
-"""Image generation cog — `/imagine` command using Google Imagen.
+"""`/imagine`: Google Imagen image generation with Yuri's spin on the prompt.
 
-Lets users generate images from text prompts. Yuri's personality is woven
-into the prompt (she adds her own commentary). Generated images are stored
-in MongoDB with a 7-day TTL for abuse tracking.
+Generated images are logged to MongoDB with a 7-day TTL for abuse tracking.
 """
-import discord
-from discord.ext import commands
-from discord import app_commands
-from google import genai
-from google.genai import types
 
-import os
 import io
 import logging
-from typing import Optional
+import os
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+from google import genai
+from google.genai import types
 
 import utils
 
@@ -28,10 +26,10 @@ IMAGINE_COOLDOWN_SECS = 30
 class ImageGen(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self._gemini_client: Optional[genai.Client] = None
+        self._gemini_client: genai.Client | None = None
 
     @property
-    def gemini_client(self) -> Optional[genai.Client]:
+    def gemini_client(self) -> genai.Client | None:
         if self._gemini_client is None:
             key = os.getenv("GEMINI_API_KEY")
             if key:
@@ -47,12 +45,7 @@ class ImageGen(commands.Cog):
     )
     @app_commands.checks.cooldown(1, IMAGINE_COOLDOWN_SECS)
     async def imagine(self, interaction: discord.Interaction, prompt: str) -> None:
-        """Generate an image using Google Imagen.
-
-        The prompt is passed through Yuri's AI brain first to add her
-        personality, then sent to Imagen. The result is posted as an
-        attachment with Yuri's commentary.
-        """
+        """Enhance the prompt through Yuri's brain, then generate the image."""
         if len(prompt) > MAX_PROMPT_CHARS:
             await interaction.response.send_message(
                 f"keep the prompt under {MAX_PROMPT_CHARS} chars bestie 💀",
@@ -79,7 +72,7 @@ class ImageGen(commands.Cog):
                 enhance_override = (
                     f"The user wants to generate an image with this prompt: '{safe_prompt}'. "
                     f"Rewrite it into a single, vivid, detailed image-generation prompt "
-                    f"(no commentary, just the prompt — max 200 words). Make it visually "
+                    f"(no commentary, just the prompt, max 200 words). Make it visually "
                     f"specific. Do NOT include any text you wouldn't want in the image. "
                     f"Reply with ONLY the enhanced prompt, nothing else."
                 )
@@ -117,9 +110,7 @@ class ImageGen(commands.Cog):
 
             img_data = response.generated_images[0].image.image_bytes
             if not img_data:
-                await interaction.followup.send(
-                    "got an empty image back, try again"
-                )
+                await interaction.followup.send("got an empty image back, try again")
                 return
 
         except Exception as e:
@@ -127,13 +118,10 @@ class ImageGen(commands.Cog):
             err_msg = str(e).lower()
             if "safety" in err_msg or "blocked" in err_msg:
                 await interaction.followup.send(
-                    "ayoo... that prompt got blocked by the safety filter bestie "
-                    "keep it clean"
+                    "ayoo... that prompt got blocked by the safety filter bestie " "keep it clean"
                 )
             else:
-                await interaction.followup.send(
-                    f"image generation failed rn ({type(e).__name__})"
-                )
+                await interaction.followup.send(f"image generation failed rn ({type(e).__name__})")
             return
 
         public_prompt = utils.sanitize_for_discord(prompt)
@@ -154,14 +142,16 @@ class ImageGen(commands.Cog):
 
         await interaction.followup.send(embed=embed, file=file)
 
-        await self.bot.image_gen_col.insert_one({
-            "user_id": interaction.user.id,
-            "username": interaction.user.name,
-            "guild_id": interaction.guild_id,
-            "prompt": prompt[:MAX_PROMPT_CHARS],
-            "enhanced_prompt": enhanced_prompt[:1000],
-            "timestamp": utils.utcnow(),
-        })
+        await self.bot.image_gen_col.insert_one(
+            {
+                "user_id": interaction.user.id,
+                "username": interaction.user.name,
+                "guild_id": interaction.guild_id,
+                "prompt": prompt[:MAX_PROMPT_CHARS],
+                "enhanced_prompt": enhanced_prompt[:1000],
+                "timestamp": utils.utcnow(),
+            }
+        )
 
 
 async def setup(bot: commands.Bot) -> None:

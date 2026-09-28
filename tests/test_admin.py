@@ -1,12 +1,11 @@
-import unittest
-import sys
 import os
-import asyncio
-from unittest.mock import MagicMock, patch, AsyncMock
-import datetime
+import sys
+import unittest
+from unittest.mock import AsyncMock, MagicMock
 
 # Add root directory to path to import utils
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 
 # Mock modules
 # Create a discord mock with app_commands as a passthrough-decorator mock
@@ -15,7 +14,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 def command_decorator(*args, **kwargs):
     def decorator(func):
         return func
+
     return decorator
+
 
 mock_discord = MagicMock()
 mock_app_commands = MagicMock()
@@ -28,12 +29,14 @@ mock_app_commands.checks.is_owner = command_decorator
 mock_app_commands.Choice = MagicMock()  # MagicMock supports [str] subscripting
 mock_discord.app_commands = mock_app_commands
 
-sys.modules['discord'] = mock_discord
-sys.modules['discord.app_commands'] = mock_app_commands
+sys.modules["discord"] = mock_discord
+sys.modules["discord.app_commands"] = mock_app_commands
+
 
 # Setup MockCog
 class MockCog:
     pass
+
 
 mock_ext = MagicMock()
 mock_commands = MagicMock()
@@ -44,10 +47,11 @@ mock_commands.is_owner = command_decorator
 
 mock_ext.commands = mock_commands
 
-sys.modules['discord.ext'] = mock_ext
-sys.modules['discord.ext.commands'] = mock_commands
+sys.modules["discord.ext"] = mock_ext
+sys.modules["discord.ext.commands"] = mock_commands
 
-import cogs.admin as admin_cog
+import cogs.admin as admin_cog  # noqa: E402  # mocks must load first
+
 
 class TestAdmin(unittest.IsolatedAsyncioTestCase):
     async def test_health_command_owner_only(self):
@@ -57,11 +61,11 @@ class TestAdmin(unittest.IsolatedAsyncioTestCase):
         bot.mongo = MagicMock()
         bot.mongo.admin = MagicMock()
         bot.mongo.admin.command = AsyncMock(return_value={"ok": 1})
-        bot.latency = 0.05 # 50ms
+        bot.latency = 0.05  # 50ms
         bot.guilds = [1, 2, 3]  # 3 guilds
         bot.cogs = {"AI": MagicMock(), "Admin": MagicMock()}
 
-        # Mock AI cog presence — must include all three providers now
+        # Mock AI cog presence - must include all three providers now
         ai_cog = MagicMock()
         ai_cog.groq_client = True
         ai_cog.gemini_client = True
@@ -69,8 +73,10 @@ class TestAdmin(unittest.IsolatedAsyncioTestCase):
 
         # Mock bot.get_cog
         def get_cog(name):
-            if name == "AI": return ai_cog
+            if name == "AI":
+                return ai_cog
             return None
+
         bot.get_cog.side_effect = get_cog
 
         cog = admin_cog.Admin(bot)
@@ -108,9 +114,9 @@ class TestAdmin(unittest.IsolatedAsyncioTestCase):
         interaction.response.send_message.assert_called_once()
         call_kwargs = interaction.response.send_message.call_args.kwargs
         # Must be ephemeral (not leak to the channel)
-        self.assertTrue(call_kwargs.get('ephemeral', False))
+        self.assertTrue(call_kwargs.get("ephemeral", False))
         # Must have an embed
-        self.assertIn('embed', call_kwargs)
+        self.assertIn("embed", call_kwargs)
 
     async def test_status_slash_command_db_down(self):
         """Status shows ⚠️ when the DB is unreachable."""
@@ -130,17 +136,18 @@ class TestAdmin(unittest.IsolatedAsyncioTestCase):
         interaction.response.send_message.assert_called_once()
         call_kwargs = interaction.response.send_message.call_args.kwargs
         # Must be ephemeral
-        self.assertTrue(call_kwargs.get('ephemeral', False))
-        self.assertIn('embed', call_kwargs)
+        self.assertTrue(call_kwargs.get("ephemeral", False))
+        self.assertIn("embed", call_kwargs)
         # The specific error message must NOT be leaked to the user-facing embed
-        embed = call_kwargs.get('embed')
-        embed_str = str(embed.to_dict()) if hasattr(embed, 'to_dict') else str(embed)
+        embed = call_kwargs.get("embed")
+        embed_str = str(embed.to_dict()) if hasattr(embed, "to_dict") else str(embed)
         self.assertNotIn("connection refused", embed_str)
 
     async def test_health_is_owner_restricted(self):
         """The !health prefix command must have @commands.is_owner() applied."""
-        # Inspect the source — the is_owner decorator must be present
-        import inspect
+        # Inspect the source - the is_owner decorator must be present
+        import inspect  # noqa: E402  # mocks must load first
+
         src = inspect.getsource(admin_cog.Admin.health)
         self.assertIn("is_owner", src)
 
@@ -162,8 +169,8 @@ class TestAdmin(unittest.IsolatedAsyncioTestCase):
         await cog.status_slash(interaction)
 
         call_kwargs = interaction.response.send_message.call_args.kwargs
-        embed = call_kwargs.get('embed')
-        embed_str = str(embed.to_dict()) if hasattr(embed, 'to_dict') else str(embed)
+        embed = call_kwargs.get("embed")
+        embed_str = str(embed.to_dict()) if hasattr(embed, "to_dict") else str(embed)
         # None of these internal details should appear in the public status
         self.assertNotIn("WebSocket ping", embed_str)
         self.assertNotIn("Loaded cogs", embed_str)
@@ -171,5 +178,6 @@ class TestAdmin(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Groq", embed_str)
         self.assertNotIn("ms", embed_str)  # no latency numbers
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

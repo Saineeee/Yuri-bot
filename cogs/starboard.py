@@ -1,18 +1,12 @@
-"""Starboard cog — auto-collects ⭐ reactions into a highlight channel.
-
-When a message receives enough ⭐ reactions (configurable per-guild, default 5),
-Yuri posts it to the designated starboard channel. The star count is tracked in
-MongoDB so a message won't be re-posted if it dips below and re-crosses the
-threshold.
-
-Admins configure the starboard with `/starboard setup <channel> [threshold]`.
-"""
-import discord
-from discord.ext import commands
-from discord import app_commands
+"""Starboard: messages with enough ⭐ reactions get reposted to a highlight
+channel. Star counts are tracked in MongoDB so entries update instead of
+reposting. Configured per-guild with /starboard setup."""
 
 import logging
-from typing import Optional
+
+import discord
+from discord import app_commands
+from discord.ext import commands
 
 import utils
 
@@ -27,10 +21,6 @@ class Starboard(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    # ------------------------------------------------------------------
-    # Slash commands
-    # ------------------------------------------------------------------
-
     @app_commands.command(
         name="starboard",
         description="Admin: configure the starboard for this server.",
@@ -40,17 +30,19 @@ class Starboard(commands.Cog):
         channel="the channel to post starred messages in (required for setup)",
         threshold="how many ⭐ reactions before a message is starred (default 5)",
     )
-    @app_commands.choices(action=[
-        app_commands.Choice(name="setup", value="setup"),
-        app_commands.Choice(name="disable", value="disable"),
-    ])
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="setup", value="setup"),
+            app_commands.Choice(name="disable", value="disable"),
+        ]
+    )
     @app_commands.checks.has_permissions(manage_guild=True)
     async def starboard_config(
         self,
         interaction: discord.Interaction,
         action: app_commands.Choice[str],
-        channel: Optional[discord.TextChannel] = None,
-        threshold: Optional[int] = None,
+        channel: discord.TextChannel | None = None,
+        threshold: int | None = None,
     ) -> None:
         """Configure or disable the starboard."""
         if not interaction.guild:
@@ -73,34 +65,33 @@ class Starboard(commands.Cog):
 
             await self.bot.config_collection.update_one(
                 {"guild_id": interaction.guild_id},
-                {"$set": {
-                    "starboard_channel_id": channel.id,
-                    "starboard_threshold": thresh,
-                }},
+                {
+                    "$set": {
+                        "starboard_channel_id": channel.id,
+                        "starboard_threshold": thresh,
+                    }
+                },
                 upsert=True,
             )
             await interaction.followup.send(
-                f"✅ starboard set to {channel.mention} with a threshold of "
-                f"**{thresh}** ⭐",
+                f"✅ starboard set to {channel.mention} with a threshold of " f"**{thresh}** ⭐",
                 ephemeral=True,
             )
 
         elif action.value == "disable":
             await self.bot.config_collection.update_one(
                 {"guild_id": interaction.guild_id},
-                {"$unset": {
-                    "starboard_channel_id": "",
-                    "starboard_threshold": "",
-                }},
+                {
+                    "$unset": {
+                        "starboard_channel_id": "",
+                        "starboard_threshold": "",
+                    }
+                },
             )
             await interaction.followup.send(
                 "✅ starboard disabled for this server.",
                 ephemeral=True,
             )
-
-    # ------------------------------------------------------------------
-    # Event listeners
-    # ------------------------------------------------------------------
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
@@ -123,30 +114,28 @@ class Starboard(commands.Cog):
 
         await self._check_star_threshold(payload, added=False)
 
-    # ------------------------------------------------------------------
-    # Core logic
-    # ------------------------------------------------------------------
-
-    async def _check_star_threshold(self, payload: discord.RawReactionActionEvent, added: bool) -> None:
-        """Fetch the message, count its ⭐ reactions, and post/update the starboard entry."""
+    async def _check_star_threshold(
+        self, payload: discord.RawReactionActionEvent, added: bool
+    ) -> None:
+        """Count ⭐ on the message, post or update the starboard entry."""
         guild_id = payload.guild_id
 
-        # Load guild config
         config = await self.bot.config_collection.find_one({"guild_id": guild_id})
         if config is None:
             return
         channel_id = config.get("starboard_channel_id")
         threshold = config.get("starboard_threshold", DEFAULT_STAR_THRESHOLD)
         if channel_id is None:
-            return  # starboard not configured
+            return  # not configured
 
-        # Fetch the original message
         guild = self.bot.get_guild(guild_id)
         if guild is None:
             return
 
         try:
-            source_channel = guild.get_channel(payload.channel_id) or await guild.fetch_channel(payload.channel_id)
+            source_channel = guild.get_channel(payload.channel_id) or await guild.fetch_channel(
+                payload.channel_id
+            )
             if source_channel is None:
                 return
             source_msg = await source_channel.fetch_message(payload.message_id)
@@ -154,11 +143,10 @@ class Starboard(commands.Cog):
             log.warning("starboard: couldn't fetch source message %s: %s", payload.message_id, e)
             return
 
-        # Don't star messages in the starboard channel itself (infinite loop guard)
+        # never star messages in the starboard channel itself (infinite loop guard)
         if payload.channel_id == channel_id:
             return
 
-        # Count ⭐ reactions
         star_count = 0
         for reaction in source_msg.reactions:
             if str(reaction.emoji) == STAR_EMOJI:
@@ -177,13 +165,11 @@ class Starboard(commands.Cog):
 
         if star_count >= threshold:
             if existing is None:
-                # New starboard entry
                 await self._post_starboard_message(starboard_channel, source_msg, star_count)
             else:
-                # Update existing entry's star count
                 await self._update_starboard_message(starboard_channel, existing, star_count)
         else:
-            # Below threshold — if we had an entry, remove it (or just update the count)
+            # dipped below threshold, keep the entry but update the count
             if existing is not None:
                 await self._update_starboard_message(starboard_channel, existing, star_count)
 
@@ -205,17 +191,19 @@ class Starboard(commands.Cog):
             log.warning("starboard: failed to post: %s", e)
             return
 
-        await self.bot.starboard_col.insert_one({
-            "guild_id": source_msg.guild.id,
-            "message_id": source_msg.id,
-            "channel_id": source_msg.channel.id,
-            "author_id": source_msg.author.id,
-            "author_name": source_msg.author.display_name,
-            "content": source_msg.content[:2000],
-            "starboard_message_id": starboard_msg.id,
-            "star_count": star_count,
-            "created_at": utils.utcnow(),
-        })
+        await self.bot.starboard_col.insert_one(
+            {
+                "guild_id": source_msg.guild.id,
+                "message_id": source_msg.id,
+                "channel_id": source_msg.channel.id,
+                "author_id": source_msg.author.id,
+                "author_name": source_msg.author.display_name,
+                "content": source_msg.content[:2000],
+                "starboard_message_id": starboard_msg.id,
+                "star_count": star_count,
+                "created_at": utils.utcnow(),
+            }
+        )
 
     async def _update_starboard_message(
         self,
@@ -234,14 +222,15 @@ class Starboard(commands.Cog):
             log.warning("starboard: couldn't fetch starboard message %s: %s", starboard_msg_id, e)
             return
 
-        # Rebuild the embed with updated star count
-        # We need to fetch the original message to rebuild the embed
+        # rebuild the embed; fall back to stored data if the source is gone
         guild = starboard_channel.guild
         try:
-            source_channel = guild.get_channel(existing["channel_id"]) or await guild.fetch_channel(existing["channel_id"])
+            source_channel = guild.get_channel(existing["channel_id"]) or await guild.fetch_channel(
+                existing["channel_id"]
+            )
             source_msg = await source_channel.fetch_message(existing["message_id"])
         except Exception:
-            # Source message deleted — use stored data
+            # source message deleted, use the stored copy
             embed = discord.Embed(
                 title=f"{STAR_EMOJI} {star_count}",
                 description=existing.get("content", "(message deleted)"),
@@ -260,7 +249,6 @@ class Starboard(commands.Cog):
         except discord.HTTPException as e:
             log.warning("starboard: failed to edit message: %s", e)
 
-        # Update the stored star count
         await self.bot.starboard_col.update_one(
             {"_id": existing["_id"]},
             {"$set": {"star_count": star_count}},
@@ -269,8 +257,7 @@ class Starboard(commands.Cog):
     @staticmethod
     def _build_starboard_embed(source_msg: discord.Message, star_count: int) -> discord.Embed:
         """Build the embed for a starboard post."""
-        # Sanitize the content for display
-        content = utils.sanitize_for_discord(source_msg.content) or "(no text — see attachments)"
+        content = utils.sanitize_for_discord(source_msg.content) or "(no text, see attachments)"
 
         embed = discord.Embed(
             description=content,
@@ -279,7 +266,9 @@ class Starboard(commands.Cog):
         )
         embed.set_author(
             name=source_msg.author.display_name,
-            icon_url=source_msg.author.display_avatar.url if source_msg.author.display_avatar else None,
+            icon_url=(
+                source_msg.author.display_avatar.url if source_msg.author.display_avatar else None
+            ),
         )
         embed.add_field(
             name="Source",
@@ -288,7 +277,6 @@ class Starboard(commands.Cog):
         )
         embed.set_footer(text=f"{STAR_EMOJI} {star_count} • #{source_msg.channel.name}")
 
-        # Attach the first image if there is one
         if source_msg.attachments:
             for att in source_msg.attachments:
                 if att.content_type and att.content_type.startswith("image/"):

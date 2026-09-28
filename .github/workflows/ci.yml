@@ -36,7 +36,7 @@ jobs:
 
       - name: Run tests
         env:
-          # Tests don't need real credentials — all I/O is mocked. But main.py's
+          # Tests don't need real credentials, all I/O is mocked. But main.py's
           # pre-flight checks require the env vars to exist, so set dummies.
           DISCORD_TOKEN: dummy
           MONGO_URL: mongodb://dummy

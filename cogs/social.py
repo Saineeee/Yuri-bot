@@ -1,29 +1,26 @@
-import discord
-from discord.ext import commands, tasks
-from discord import app_commands
-
 import asyncio
+import contextlib
 import datetime
 import logging
-from typing import Optional
+
+import discord
+from discord import app_commands
+from discord.ext import commands, tasks
 
 import utils
 
 log = logging.getLogger(__name__)
 
 
-# Cooldowns: prevent spam flooding of public-channel commands.
-# 1 use per 5 minutes per user, with a 2-per-guild burst limit.
-CONFESS_COOLDOWN_SECS    = 300   # 5 minutes
-HOTORNOT_COOLDOWN_SECS   = 600   # 10 minutes
-HOTORNOT_VERDICT_DELAY   = 900   # 15 minutes
+CONFESS_COOLDOWN_SECS = 300
+HOTORNOT_COOLDOWN_SECS = 600
+HOTORNOT_VERDICT_DELAY = 900
 
 
 class Social(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        # Start the pending-verdict sweep loop (survives bot restarts because
-        # pending verdicts are persisted in MongoDB, not in-memory).
+        # verdicts live in mongo so they survive restarts
         self._verdict_sweep.start()
 
     def cog_unload(self) -> None:
@@ -33,10 +30,7 @@ class Social(commands.Cog):
         return self.bot.get_cog("AI")
 
     async def _include_presence(self, user_id: int) -> bool:
-        """Check the user's privacy preference. Returns True if presence data is allowed.
-
-        Defaults to True (opt-in to opt-OUT) to preserve existing behavior.
-        """
+        """Privacy pref: presence data allowed unless the user opted out."""
         doc = await self.bot.privacy_collection.find_one({"user_id": user_id})
         if doc is None:
             return True
@@ -44,11 +38,7 @@ class Social(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def _verdict_sweep(self) -> None:
-        """Every 60s, deliver any hotornot verdicts whose deliver_at has passed.
-
-        Replaces the previous in-memory asyncio.sleep(900) approach, which would
-        silently drop the verdict if the bot restarted during the 15-minute wait.
-        """
+        """Deliver hotornot verdicts whose deliver_at has passed."""
         try:
             now = utils.utcnow()
             cursor = self.bot.pending_verdicts_col.find({"deliver_at": {"$lte": now}})
@@ -78,7 +68,9 @@ class Social(commands.Cog):
             log.warning("hotornot: vote message %s was deleted before verdict.", doc["vote_msg_id"])
             return
         except discord.Forbidden:
-            log.warning("hotornot: bot lacks permission to read vote message %s.", doc["vote_msg_id"])
+            log.warning(
+                "hotornot: bot lacks permission to read vote message %s.", doc["vote_msg_id"]
+            )
             return
 
         hot_count = 0
@@ -103,7 +95,7 @@ class Social(commands.Cog):
             doc["user_id"], None, prompt_override=verdict_prompt
         )
 
-        # Sanitize model output before posting to a public channel.
+        # model output goes to a public channel, break any mentions first
         public_verdict = utils.sanitize_for_discord(verdict)
 
         result_embed = discord.Embed(
@@ -116,14 +108,10 @@ class Social(commands.Cog):
         except discord.Forbidden:
             log.warning("hotornot: bot lacks permission to post verdict in channel %s.", channel.id)
 
-    # --- /roast ---
-
     @app_commands.command(name="roast", description="DESTROY someone based on history.")
     async def roast(self, interaction: discord.Interaction, member: discord.Member) -> None:
         if not interaction.guild:
-            await interaction.response.send_message(
-                "this only works in a server", ephemeral=True
-            )
+            await interaction.response.send_message("this only works in a server", ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -131,9 +119,10 @@ class Social(commands.Cog):
         include_presence = await self._include_presence(member.id)
         dossier = utils.get_user_dossier(member, include_presence=include_presence)
         history = await utils.get_user_history_text(self.bot.chat_collection, member.id)
-        pfp     = (
+        pfp = (
             await utils.get_image_from_url(member.display_avatar.url)
-            if member.display_avatar else None
+            if member.display_avatar
+            else None
         )
 
         prompt = (
@@ -148,11 +137,8 @@ class Social(commands.Cog):
         )
         await utils.send_chunked_reply(interaction, f"{member.mention} {resp}")
 
-    # --- /rate ---
-
     @app_commands.command(name="rate", description="Judge vibe based on chat history.")
     async def rate(self, interaction: discord.Interaction, member: discord.Member) -> None:
-        # DM guard.
         if not interaction.guild:
             await interaction.response.send_message(
                 "this only works in a server 💀", ephemeral=True
@@ -164,9 +150,10 @@ class Social(commands.Cog):
         include_presence = await self._include_presence(member.id)
         dossier = utils.get_user_dossier(member, include_presence=include_presence)
         history = await utils.get_user_history_text(self.bot.chat_collection, member.id)
-        pfp     = (
+        pfp = (
             await utils.get_image_from_url(member.display_avatar.url)
-            if member.display_avatar else None
+            if member.display_avatar
+            else None
         )
 
         prompt = (
@@ -181,16 +168,13 @@ class Social(commands.Cog):
         )
         await utils.send_chunked_reply(interaction, f"{member.mention} {resp}")
 
-    # --- /ship ---
-
     @app_commands.command(name="ship", description="Check compatibility.")
     async def ship(
         self,
         interaction: discord.Interaction,
         member1: discord.Member,
-        member2: Optional[discord.Member] = None,
+        member2: discord.Member | None = None,
     ) -> None:
-        # DM guard.
         if not interaction.guild:
             await interaction.response.send_message(
                 "ship people in a server, not in dms 💀", ephemeral=True
@@ -205,8 +189,12 @@ class Social(commands.Cog):
             await interaction.followup.send("shipping yourself?? bro please 💀")
             return
 
-        d1 = utils.get_user_dossier(member1, include_presence=await self._include_presence(member1.id))
-        d2 = utils.get_user_dossier(target2, include_presence=await self._include_presence(target2.id))
+        d1 = utils.get_user_dossier(
+            member1, include_presence=await self._include_presence(member1.id)
+        )
+        d2 = utils.get_user_dossier(
+            target2, include_presence=await self._include_presence(target2.id)
+        )
         h1 = await utils.get_user_history_text(self.bot.chat_collection, member1.id, limit=30)
         h2 = await utils.get_user_history_text(self.bot.chat_collection, target2.id, limit=30)
 
@@ -214,9 +202,7 @@ class Social(commands.Cog):
             interaction.channel, fetch_limit=100, keep_limit=20
         )
         interaction_log = (
-            "\n".join(raw_msgs)
-            if raw_msgs
-            else "No recent interactions found in this channel."
+            "\n".join(raw_msgs) if raw_msgs else "No recent interactions found in this channel."
         )
 
         combined_img = None
@@ -228,8 +214,8 @@ class Social(commands.Cog):
 
         prompt = (
             f"Ship these two people based on their ACTUAL messages and interactions.\n\n"
-            f"PERSON 1 — {member1.display_name}:\n{d1}\nTheir messages:\n{h1}\n\n"
-            f"PERSON 2 — {target2.display_name}:\n{d2}\nTheir messages:\n{h2}\n\n"
+            f"PERSON 1 - {member1.display_name}:\n{d1}\nTheir messages:\n{h1}\n\n"
+            f"PERSON 2 - {target2.display_name}:\n{d2}\nTheir messages:\n{h2}\n\n"
             f"Their recent channel interactions:\n{interaction_log}\n\n"
             f"INSTRUCTION: Give a ship name, a % score, and judge if they'd actually work. "
             f"Reference specific things from their messages. Be dramatic and chaotic as Yuri."
@@ -248,12 +234,9 @@ class Social(commands.Cog):
         embed.set_footer(text="based on actual message history and interactions")
         await interaction.followup.send(embed=embed)
 
-    # --- /confess ---
-
     @app_commands.command(name="confess", description="Send an anonymous confession.")
     @app_commands.checks.cooldown(1, CONFESS_COOLDOWN_SECS)
     async def confess(self, interaction: discord.Interaction, message: str) -> None:
-        # DM guard.
         if not interaction.guild:
             await interaction.response.send_message(
                 "confessions go in a server, not in my dms 💀", ephemeral=True
@@ -264,18 +247,14 @@ class Social(commands.Cog):
 
         config = await self.bot.config_collection.find_one({"guild_id": interaction.guild_id})
         if not config or "confession_channel_id" not in config:
-            await interaction.followup.send(
-                "❌ Admin must run `/setup` first!", ephemeral=True
-            )
+            await interaction.followup.send("❌ Admin must run `/setup` first!", ephemeral=True)
             return
 
         channel = interaction.guild.get_channel(
             config["confession_channel_id"]
         ) or await interaction.guild.fetch_channel(config["confession_channel_id"])
 
-        # CRITICAL: sanitize the raw user input before embedding so it can't ping
-        # @everyone, a role, or an arbitrary user. This is the fix for the
-        # mention-injection bug where /confess could be abused to mass-ping.
+        # break mentions before embedding, or a confession could mass-ping
         safe_message = utils.sanitize_for_discord(message)
 
         embed = discord.Embed(
@@ -287,11 +266,8 @@ class Social(commands.Cog):
         await channel.send(embed=embed)
         await interaction.followup.send("✅ Sent!", ephemeral=True)
 
-    # --- /crush ---
-
     @app_commands.command(name="crush", description="Secretly match with your crush!")
     async def crush(self, interaction: discord.Interaction, target: discord.Member) -> None:
-        # DM guard.
         if not interaction.guild:
             await interaction.response.send_message(
                 "this only works in a server 💀", ephemeral=True
@@ -308,18 +284,10 @@ class Social(commands.Cog):
             {"lover_id": target.id, "target_id": interaction.user.id}
         )
         if match:
-            try:
-                await interaction.user.send(
-                    f"💖 **MATCH!** {target.display_name} likes you back!"
-                )
-            except discord.Forbidden:
-                pass
-            try:
-                await target.send(
-                    f"💖 **MATCH!** {interaction.user.display_name} likes you back!"
-                )
-            except discord.Forbidden:
-                pass
+            with contextlib.suppress(discord.Forbidden):
+                await interaction.user.send(f"💖 **MATCH!** {target.display_name} likes you back!")
+            with contextlib.suppress(discord.Forbidden):
+                await target.send(f"💖 **MATCH!** {interaction.user.display_name} likes you back!")
             await interaction.channel.send(
                 "@everyone 🚨 **LOVE ALERT:** Two people just matched via `/crush`! 💍✨"
             )
@@ -333,8 +301,6 @@ class Social(commands.Cog):
             )
             await interaction.followup.send("🤫 **Secret Kept.**", ephemeral=True)
 
-    # --- /truth ---
-
     @app_commands.command(name="truth", description="Get a spicy Truth question.")
     async def truth(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
@@ -345,8 +311,6 @@ class Social(commands.Cog):
             prompt_override="Give a funny, spicy teenage Truth question.",
         )
         await utils.send_chunked_reply(interaction, f"**TRUTH:** {resp}")
-
-    # --- /dare ---
 
     @app_commands.command(name="dare", description="Get a chaotic Dare.")
     async def dare(self, interaction: discord.Interaction) -> None:
@@ -359,17 +323,16 @@ class Social(commands.Cog):
         )
         await utils.send_chunked_reply(interaction, f"**DARE:** {resp}")
 
-    # --- /poll ---
-
-    @app_commands.command(name="poll", description="Yuri hosts a drama-style poll and picks a side.")
+    @app_commands.command(
+        name="poll", description="Yuri hosts a drama-style poll and picks a side."
+    )
     async def poll(
         self,
         interaction: discord.Interaction,
         question: str,
-        option1:  str,
-        option2:  str,
+        option1: str,
+        option2: str,
     ) -> None:
-        # DM guard.
         if not interaction.guild:
             await interaction.response.send_message(
                 "polls only work in a server 💀", ephemeral=True
@@ -378,7 +341,7 @@ class Social(commands.Cog):
 
         await interaction.response.defer()
 
-        safe_q  = utils.sanitize_for_prompt(question)
+        safe_q = utils.sanitize_for_prompt(question)
         safe_o1 = utils.sanitize_for_prompt(option1)
         safe_o2 = utils.sanitize_for_prompt(option2)
 
@@ -405,15 +368,12 @@ class Social(commands.Cog):
         await poll_msg.add_reaction("🅰️")
         await poll_msg.add_reaction("🅱️")
 
-    # --- /hotornot ---
-
     @app_commands.command(
         name="hotornot",
         description="Submit an anonymous description and let the server judge you.",
     )
     @app_commands.checks.cooldown(1, HOTORNOT_COOLDOWN_SECS)
     async def hotornot(self, interaction: discord.Interaction, description: str) -> None:
-        # DM guard.
         if not interaction.guild:
             await interaction.response.send_message(
                 "this only works in a server 💀", ephemeral=True
@@ -422,17 +382,19 @@ class Social(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
-        config     = await self.bot.config_collection.find_one({"guild_id": interaction.guild_id})
+        config = await self.bot.config_collection.find_one({"guild_id": interaction.guild_id})
         channel_id = config.get("confession_channel_id") if config else None
-        channel    = interaction.channel
+        channel = interaction.channel
 
         if channel_id:
-            fetched = interaction.guild.get_channel(channel_id) or await interaction.guild.fetch_channel(channel_id)
+            fetched = interaction.guild.get_channel(
+                channel_id
+            ) or await interaction.guild.fetch_channel(channel_id)
             if fetched:
                 channel = fetched
 
         safe_desc = utils.sanitize_for_prompt(description)
-        ai        = await self.get_ai_cog()
+        ai = await self.get_ai_cog()
         intro_prompt = (
             f"Someone anonymously submitted this for a hot or not judgment: '{safe_desc}'. "
             f"Write a short dramatic intro for the server to read before they vote. "
@@ -442,12 +404,8 @@ class Social(commands.Cog):
             interaction.user.id, None, prompt_override=intro_prompt
         )
 
-        # CRITICAL: use sanitize_for_discord on the raw user-supplied description
-        # before it goes into the public embed. The original bug used the raw
-        # `description` here, allowing @everyone / role pings.
+        # both the raw description and the model intro go public, sanitize both
         public_desc = utils.sanitize_for_discord(description)
-        # yuri_intro comes from the model — sanitize it too just in case the model
-        # echoes back something pingable.
         public_intro = utils.sanitize_for_discord(yuri_intro)
 
         embed = discord.Embed(
@@ -464,28 +422,26 @@ class Social(commands.Cog):
             "✅ submitted anonymously. good luck bestie 💀", ephemeral=True
         )
 
-        # Persist the pending verdict so a bot restart doesn't silently drop it.
-        # A periodic sweep task (started in General cog / setup_hook) will pick it
-        # up after HOTORNOT_VERDICT_DELAY seconds and post the verdict.
+        # persist the pending verdict so a restart doesn't drop it, the sweep
+        # loop picks it up after HOTORNOT_VERDICT_DELAY
         deliver_at = utils.utcnow() + datetime.timedelta(seconds=HOTORNOT_VERDICT_DELAY)
-        await self.bot.pending_verdicts_col.insert_one({
-            "channel_id":  channel.id,
-            "guild_id":    interaction.guild_id,
-            "vote_msg_id": vote_msg.id,
-            "safe_desc":   safe_desc,
-            "user_id":     interaction.user.id,
-            "deliver_at":  deliver_at,
-            "created_at":  utils.utcnow(),
-        })
-
-    # --- /summarize ---
+        await self.bot.pending_verdicts_col.insert_one(
+            {
+                "channel_id": channel.id,
+                "guild_id": interaction.guild_id,
+                "vote_msg_id": vote_msg.id,
+                "safe_desc": safe_desc,
+                "user_id": interaction.user.id,
+                "deliver_at": deliver_at,
+                "created_at": utils.utcnow(),
+            }
+        )
 
     @app_commands.command(
         name="summarize",
         description="Yuri summarizes the last 20 messages in this channel.",
     )
     async def summarize(self, interaction: discord.Interaction) -> None:
-        # DM guard.
         if not interaction.guild:
             await interaction.response.send_message(
                 "summarize a server chat bestie, not our dms 💀", ephemeral=True
@@ -510,9 +466,7 @@ class Social(commands.Cog):
             f"Summarize what's going on in this chat as Yuri. Be chaotic, dramatic, and gen z. "
             f"Point out any drama, funny moments, or weird vibes. Keep it short."
         )
-        resp, _ = await ai.get_combined_response(
-            interaction.user.id, None, prompt_override=prompt
-        )
+        resp, _ = await ai.get_combined_response(interaction.user.id, None, prompt_override=prompt)
 
         embed = discord.Embed(
             title="📋 CHAT SUMMARY",
@@ -522,8 +476,6 @@ class Social(commands.Cog):
         embed.set_footer(text="based on the last 20 messages")
         await interaction.followup.send(embed=embed)
 
-    # --- /compatibility ---
-
     @app_commands.command(
         name="compatibility",
         description="Deep compatibility check based on actual server messages.",
@@ -532,9 +484,8 @@ class Social(commands.Cog):
         self,
         interaction: discord.Interaction,
         member1: discord.Member,
-        member2: Optional[discord.Member] = None,
+        member2: discord.Member | None = None,
     ) -> None:
-        # DM guard.
         if not interaction.guild:
             await interaction.response.send_message(
                 "this only works in a server 💀", ephemeral=True
@@ -549,25 +500,27 @@ class Social(commands.Cog):
             await interaction.followup.send("bro is trying to ship themselves 💀 seek help")
             return
 
-        d1 = utils.get_user_dossier(member1, include_presence=await self._include_presence(member1.id))
-        d2 = utils.get_user_dossier(target2, include_presence=await self._include_presence(target2.id))
+        d1 = utils.get_user_dossier(
+            member1, include_presence=await self._include_presence(member1.id)
+        )
+        d2 = utils.get_user_dossier(
+            target2, include_presence=await self._include_presence(target2.id)
+        )
         h1 = await utils.get_user_history_text(self.bot.chat_collection, member1.id, limit=30)
         h2 = await utils.get_user_history_text(self.bot.chat_collection, target2.id, limit=30)
-        
+
         raw_msgs = await utils.fetch_channel_messages(
             interaction.channel, fetch_limit=100, keep_limit=20
         )
         interaction_log = (
-            "\n".join(raw_msgs)
-            if raw_msgs
-            else "No recent interactions found in this channel."
+            "\n".join(raw_msgs) if raw_msgs else "No recent interactions found in this channel."
         )
 
         ai = await self.get_ai_cog()
         prompt = (
             f"Do a DEEP compatibility analysis between two people.\n\n"
-            f"PERSON 1 — {member1.display_name}:\n{d1}\nTheir messages with Yuri:\n{h1}\n\n"
-            f"PERSON 2 — {target2.display_name}:\n{d2}\nTheir messages with Yuri:\n{h2}\n\n"
+            f"PERSON 1 - {member1.display_name}:\n{d1}\nTheir messages with Yuri:\n{h1}\n\n"
+            f"PERSON 2 - {target2.display_name}:\n{d2}\nTheir messages with Yuri:\n{h2}\n\n"
             f"Their recent channel interactions:\n{interaction_log}\n\n"
             f"INSTRUCTION: Analyze their communication styles, energy levels, humor, and any "
             f"actual interactions. Give a compatibility % score and explain WHY they work or "
@@ -575,9 +528,7 @@ class Social(commands.Cog):
             f"and chaotic as Yuri. Format it like a proper compatibility report but in gen z language."
         )
 
-        resp, _ = await ai.get_combined_response(
-            interaction.user.id, None, prompt_override=prompt
-        )
+        resp, _ = await ai.get_combined_response(interaction.user.id, None, prompt_override=prompt)
 
         embed = discord.Embed(
             title=f"💘 {member1.display_name} × {target2.display_name}",

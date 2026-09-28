@@ -1,35 +1,29 @@
-"""Voice channel TTS cog — `/say` command + auto-speak in VC.
+"""Voice TTS: /say speaks a message in the caller's VC, /vc joins/leaves,
+and /voice toggles auto-speak for @mention replies. Groq TTS with gTTS
+fallback; degrades gracefully if PyNaCl/ffmpeg/gTTS are missing."""
 
-Lets users summon Yuri into a voice channel to speak a message. Uses Groq's
-TTS API (if available) with gTTS as a fallback. Also provides `/vc` to
-make Yuri join/leave the caller's voice channel.
-
-Dependencies: PyNaCl (for discord.py voice), ffmpeg (system), gTTS (fallback).
-These are optional — the cog degrades gracefully if unavailable.
-"""
-import discord
-from discord.ext import commands
-from discord import app_commands
-
-import os
+import asyncio
+import contextlib
 import io
 import logging
-import asyncio
-import datetime
-from typing import Optional
+
+import discord
+from discord import app_commands
+from discord.ext import commands
 
 import utils
 
 log = logging.getLogger(__name__)
 
 
-# Try importing TTS libraries — degrade gracefully if missing
+# TTS libs are optional, degrade gracefully if missing
 try:
     from gtts import gTTS
+
     _GTTS_AVAILABLE = True
 except ImportError:
     _GTTS_AVAILABLE = False
-    log.info("gTTS not installed — TTS will use Groq only (if available).")
+    log.info("gTTS not installed, TTS will use Groq only (if available).")
 
 
 MAX_TTS_CHARS = 500
@@ -39,11 +33,7 @@ SAY_COOLDOWN_SECS = 10
 class VoiceTTS(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self._voice_clients: dict[int, discord.VoiceClient] = {}  # guild_id → voice_client
-
-    # ------------------------------------------------------------------
-    # Slash commands
-    # ------------------------------------------------------------------
+        self._voice_clients: dict[int, discord.VoiceClient] = {}  # guild_id -> client
 
     @app_commands.command(
         name="say",
@@ -77,26 +67,21 @@ class VoiceTTS(commands.Cog):
 
         await interaction.response.defer()
 
-        # Join the voice channel (or move to the caller's channel if already
-        # connected elsewhere in the same guild)
+        # join (or move to) the caller's channel
         voice_client = await self._join_or_move(voice_state.channel)
         if voice_client is None:
             await interaction.followup.send(
-                "couldn't join the voice channel 💀 check my permissions "
-                "(Connect + Speak)"
+                "couldn't join the voice channel 💀 check my permissions " "(Connect + Speak)"
             )
             return
 
-        # Generate the TTS audio
+        # generate TTS, then play it (interrupting anything already playing)
         safe_text = utils.sanitize_for_prompt(text)
         audio_bytes = await self._generate_tts(safe_text)
         if audio_bytes is None:
-            await interaction.followup.send(
-                "couldn't generate audio rn 💀 try again"
-            )
+            await interaction.followup.send("couldn't generate audio rn 💀 try again")
             return
 
-        # Play the audio (stop anything currently playing)
         if voice_client.is_playing():
             voice_client.stop()
 
@@ -118,10 +103,12 @@ class VoiceTTS(commands.Cog):
         description="Make Yuri join or leave your voice channel.",
     )
     @app_commands.describe(action="join or leave")
-    @app_commands.choices(action=[
-        app_commands.Choice(name="join", value="join"),
-        app_commands.Choice(name="leave", value="leave"),
-    ])
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="join", value="join"),
+            app_commands.Choice(name="leave", value="leave"),
+        ]
+    )
     async def vc(
         self,
         interaction: discord.Interaction,
@@ -163,10 +150,8 @@ class VoiceTTS(commands.Cog):
                 )
                 return
 
-            try:
+            with contextlib.suppress(Exception):
                 voice_client.stop()
-            except Exception:
-                pass
             await voice_client.disconnect()
             self._voice_clients.pop(interaction.guild_id, None)
             await interaction.response.send_message("👋 left the voice channel")
@@ -178,24 +163,19 @@ class VoiceTTS(commands.Cog):
     @app_commands.describe(
         mode="on = auto-speak replies in VC, off = text-only replies, status = check current"
     )
-    @app_commands.choices(mode=[
-        app_commands.Choice(name="on",     value="on"),
-        app_commands.Choice(name="off",    value="off"),
-        app_commands.Choice(name="status", value="status"),
-    ])
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(name="on", value="on"),
+            app_commands.Choice(name="off", value="off"),
+            app_commands.Choice(name="status", value="status"),
+        ]
+    )
     async def voice(
         self,
         interaction: discord.Interaction,
         mode: app_commands.Choice[str],
     ) -> None:
-        """Toggle auto-speak mode for this guild.
-
-        When ON (default): if Yuri is in a voice channel, any @mention or reply
-        in the text channel gets a response that is BOTH sent as text AND spoken
-        in the VC. This means you don't need /say every time — just chat normally.
-
-        When OFF: Yuri only speaks when you explicitly use /say.
-        """
+        """Toggle auto-speak: on = @mention replies get spoken in the VC too."""
         if not interaction.guild:
             await interaction.response.send_message(
                 "this only works in a server 💀", ephemeral=True
@@ -206,8 +186,10 @@ class VoiceTTS(commands.Cog):
 
         if mode.value == "status":
             enabled = await self.is_voice_mode_enabled(interaction.guild_id)
-            in_vc = interaction.guild_id in self._voice_clients and \
-                    self._voice_clients[interaction.guild_id].is_connected()
+            in_vc = (
+                interaction.guild_id in self._voice_clients
+                and self._voice_clients[interaction.guild_id].is_connected()
+            )
             vc_name = ""
             if in_vc:
                 vc = self._voice_clients[interaction.guild_id]
@@ -221,17 +203,18 @@ class VoiceTTS(commands.Cog):
                 description=(
                     f"**Auto-speak:** {status}{vc_name}\n"
                     f"**In voice channel:** {vc_status}\n\n"
-                    + ("auto-speak is active — just @mention me and I'll speak my reply!"
-                       if enabled and in_vc
-                       else "use `/voice on` to enable auto-speak, then `/vc join` to summon me."
-                      )
+                    + (
+                        "auto-speak is active, just @mention me and I'll speak my reply!"
+                        if enabled and in_vc
+                        else "use `/voice on` to enable auto-speak, then `/vc join` to summon me."
+                    )
                 ),
                 color=discord.Color.from_rgb(255, 105, 180),
             )
             await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
-        enabled = (mode.value == "on")
+        enabled = mode.value == "on"
         await self.bot.config_collection.update_one(
             {"guild_id": interaction.guild_id},
             {"$set": {"voice_mode_enabled": enabled}},
@@ -239,10 +222,12 @@ class VoiceTTS(commands.Cog):
         )
 
         if enabled:
-            in_vc = interaction.guild_id in self._voice_clients and \
-                    self._voice_clients[interaction.guild_id].is_connected()
+            in_vc = (
+                interaction.guild_id in self._voice_clients
+                and self._voice_clients[interaction.guild_id].is_connected()
+            )
             hint = (
-                "\n\ni'm already in a VC — just @mention me and i'll speak!"
+                "\n\ni'm already in a VC, just @mention me and i'll speak!"
                 if in_vc
                 else "\n\nnow run `/vc join` to summon me into a voice channel."
             )
@@ -257,10 +242,6 @@ class VoiceTTS(commands.Cog):
                 ephemeral=True,
             )
 
-    # ------------------------------------------------------------------
-    # Public API — called by the AI cog to auto-speak replies
-    # ------------------------------------------------------------------
-
     async def is_voice_mode_enabled(self, guild_id: int) -> bool:
         """Check if auto-speak is enabled for this guild. Defaults to True."""
         config = await self.bot.config_collection.find_one({"guild_id": guild_id})
@@ -269,16 +250,13 @@ class VoiceTTS(commands.Cog):
         return bool(config.get("voice_mode_enabled", True))
 
     async def is_in_vc(self, guild_id: int) -> bool:
-        """Check if Yuri is currently connected to a VC in this guild."""
         vc = self._voice_clients.get(guild_id)
         return vc is not None and vc.is_connected()
 
     async def speak_in_guild_vc(self, guild_id: int, text: str) -> bool:
-        """Speak *text* in the guild's voice channel. Returns True on success.
+        """Speak *text* in the guild's VC. Returns False if not connected/failing.
 
-        Called by the AI cog after sending a text reply, when auto-speak is on.
-        Truncates text to MAX_TTS_CHARS to avoid huge TTS calls. Interrupts
-        anything currently playing (matches /say behavior).
+        Called by the AI cog after a text reply when auto-speak is on.
         """
         if not text or not text.strip():
             return False
@@ -287,17 +265,15 @@ class VoiceTTS(commands.Cog):
         if voice_client is None or not voice_client.is_connected():
             return False
 
-        # Truncate to avoid huge TTS calls
         safe_text = utils.sanitize_for_prompt(text)
         if len(safe_text) > MAX_TTS_CHARS:
-            safe_text = safe_text[:MAX_TTS_CHARS - 3] + "..."
+            safe_text = safe_text[: MAX_TTS_CHARS - 3] + "..."
 
         audio_bytes = await self._generate_tts(safe_text)
         if audio_bytes is None:
             log.warning("auto-speak: TTS generation failed for guild %s", guild_id)
             return False
 
-        # Interrupt anything currently playing
         if voice_client.is_playing():
             voice_client.stop()
 
@@ -309,11 +285,7 @@ class VoiceTTS(commands.Cog):
             log.warning("auto-speak: playback failed in guild %s: %s", guild_id, e)
             return False
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    async def _join_or_move(self, channel: discord.VoiceChannel) -> Optional[discord.VoiceClient]:
+    async def _join_or_move(self, channel: discord.VoiceChannel) -> discord.VoiceClient | None:
         """Join *channel*, or move to it if already connected elsewhere in the guild."""
         guild_id = channel.guild.id
         existing = self._voice_clients.get(guild_id)
@@ -321,7 +293,6 @@ class VoiceTTS(commands.Cog):
         if existing is not None and existing.is_connected():
             if existing.channel.id == channel.id:
                 return existing
-            # Move to the new channel
             try:
                 await existing.move_to(channel)
                 return existing
@@ -329,7 +300,6 @@ class VoiceTTS(commands.Cog):
                 log.warning("failed to move to channel %s: %s", channel.id, e)
                 return None
 
-        # Fresh connect
         try:
             voice_client = await channel.connect(timeout=15.0)
             self._voice_clients[guild_id] = voice_client
@@ -338,12 +308,8 @@ class VoiceTTS(commands.Cog):
             log.warning("failed to join channel %s: %s", channel.id, e)
             return None
 
-    async def _generate_tts(self, text: str) -> Optional[bytes]:
-        """Generate TTS audio bytes. Tries Groq first, falls back to gTTS.
-
-        Returns PCM-encoded bytes suitable for FFmpegPCMAudio, or None on failure.
-        """
-        # Try Groq TTS first (better quality)
+    async def _generate_tts(self, text: str) -> bytes | None:
+        """TTS bytes for FFmpegPCMAudio, or None. Groq first, gTTS fallback."""
         ai_cog = self.bot.get_cog("AI")
         if ai_cog is not None and ai_cog.groq_client is not None:
             try:
@@ -353,17 +319,16 @@ class VoiceTTS(commands.Cog):
                     input=text,
                     response_format="wav",
                 )
-                # Groq returns a raw response — read the bytes
-                audio_bytes = speech.read() if hasattr(speech, 'read') else speech
+                # the response can be raw bytes, a file-like, or a response object
+                audio_bytes = speech.read() if hasattr(speech, "read") else speech
                 if isinstance(audio_bytes, (bytes, bytearray)):
                     return bytes(audio_bytes)
-                # If it's a response object with content
-                if hasattr(audio_bytes, 'content'):
+                if hasattr(audio_bytes, "content"):
                     return audio_bytes.content
             except Exception as e:
                 log.warning("Groq TTS failed, falling back to gTTS: %s", e)
 
-        # Fallback: gTTS (Google Translate TTS — MP3 format, FFmpeg handles it)
+        # gTTS fallback (MP3, FFmpeg handles the conversion)
         if not _GTTS_AVAILABLE:
             log.warning("No TTS backend available (Groq failed + gTTS not installed)")
             return None
@@ -378,10 +343,6 @@ class VoiceTTS(commands.Cog):
             log.error("gTTS failed: %s", e)
             return None
 
-    # ------------------------------------------------------------------
-    # Auto-cleanup: disconnect when alone in a VC
-    # ------------------------------------------------------------------
-
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
         """Auto-disconnect if Yuri is left alone in a voice channel."""
@@ -395,25 +356,24 @@ class VoiceTTS(commands.Cog):
         if vc_channel is None:
             return
 
-        # Count non-bot members in the channel
         humans = [m for m in vc_channel.members if not m.bot]
         if len(humans) == 0:
-            try:
+            with contextlib.suppress(Exception):
                 voice_client.stop()
-            except Exception:
-                pass
             await voice_client.disconnect()
             self._voice_clients.pop(member.guild.id, None)
-            log.info("auto-disconnected from empty VC %s in guild %s",
-                     vc_channel.id, member.guild.id)
+            log.info(
+                "auto-disconnected from empty VC %s in guild %s", vc_channel.id, member.guild.id
+            )
 
 
 async def setup(bot: commands.Bot) -> None:
-    # Only load if voice + PyNaCl are available
+    # voice needs PyNaCl, skip the cog entirely if it's missing
     try:
         import nacl  # noqa: F401
     except ImportError:
-        log.warning("PyNaCl not installed — VoiceTTS cog disabled. "
-                    "Install with: pip install PyNaCl")
+        log.warning(
+            "PyNaCl not installed, VoiceTTS cog disabled. " "Install with: pip install PyNaCl"
+        )
         return
     await bot.add_cog(VoiceTTS(bot))

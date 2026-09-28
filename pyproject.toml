@@ -43,9 +43,9 @@ extend-exclude = [".git", "__pycache__", "build", "dist"]
 # flake8-comprehensions (C4), flake8-simplify (SIM), pyupgrade (UP)
 select = ["E", "W", "F", "I", "B", "C4", "SIM", "UP"]
 ignore = [
-    "E501",   # line too long — let black handle formatting
+    "E501",   # line too long, black owns formatting
     "B008",   # function call in default argument (used by discord.py decorators)
-    "SIM117", # nested with statements — sometimes clearer to nest
+    "SIM117", # nested with statements, sometimes clearer to nest
 ]
 
 [tool.ruff.lint.per-file-ignores]

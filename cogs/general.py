@@ -1,22 +1,34 @@
-import discord
-from discord.ext import commands, tasks
-from discord import app_commands
 import random
-import datetime
-from typing import Optional
+
+import discord
+from discord import app_commands
+from discord.ext import commands, tasks
 
 import utils
-
 
 # Static data for low-effort commands
 
 _8BALL_RESPONSES = [
-    "yes.", "no.", "lol no.", "obv yes.", "lmao absolutely not.",
-    "idk man maybe??", "signs point to yes bestie", "don't even think about it.",
-    "100% yes.", "the vibes say... no... hehe", "ask me later im busy",
-    "yep yep yep", "hard no.", "ugh yes.", "NOPE.",
-    "the universe says yes", "i wouldn't if i were you", "trust me yes.",
-    "eh maybe who cares", "absolutely fr yes.",
+    "yes.",
+    "no.",
+    "lol no.",
+    "obv yes.",
+    "lmao absolutely not.",
+    "idk man maybe??",
+    "signs point to yes bestie",
+    "don't even think about it.",
+    "100% yes.",
+    "the vibes say... no... hehe",
+    "ask me later im busy",
+    "yep yep yep",
+    "hard no.",
+    "ugh yes.",
+    "NOPE.",
+    "the universe says yes",
+    "i wouldn't if i were you",
+    "trust me yes.",
+    "eh maybe who cares",
+    "absolutely fr yes.",
 ]
 
 _SUPPORTED_LANGUAGES = [
@@ -56,7 +68,7 @@ class General(commands.Cog):
             (discord.ActivityType.watching, "you sleep"),
             (discord.ActivityType.playing, "DDLC"),
             (discord.ActivityType.listening, "to tea ☕"),
-            (discord.ActivityType.listening, "fav songs")
+            (discord.ActivityType.listening, "fav songs"),
         ]
         type_, name = random.choice(statuses)
         await self.bot.change_presence(
@@ -73,22 +85,22 @@ class General(commands.Cog):
         embed = discord.Embed(
             title="✨ YURI'S MENU",
             description="\nHere is what I can do:",
-            color=discord.Color.from_rgb(255, 105, 180) # Hot Pink
+            color=discord.Color.from_rgb(255, 105, 180),  # Hot Pink
         )
-        
+
         # Judgement Commands
         embed.add_field(
-            name="👀 **JUDGMENT**", 
+            name="👀 **JUDGMENT**",
             value=(
                 "`/roast @user` - Absolutely destroy someone's ego.\n"
                 "`/rate @user` - I judge their vibe (0-100%).\n"
                 "`/ship @user` - Quick compatibility check.\n"
                 "`/compatibility @user1 @user2` - Deep compatibility based on actual messages.\n"
                 "`/summarize` - I recap the last 20 messages in this channel."
-            ), 
-            inline=False
+            ),
+            inline=False,
         )
-        
+
         # Social & Fun
         embed.add_field(
             name="**DRAMA & CHAOS**",
@@ -108,7 +120,7 @@ class General(commands.Cog):
                 "`/vc [join|leave]` - Join or leave a voice channel.\n"
                 "`/setuproles` - Admin: create a reaction-role message."
             ),
-            inline=False
+            inline=False,
         )
 
         # Utility
@@ -129,10 +141,10 @@ class General(commands.Cog):
                 "`/status` - Check if Yuri is online and operational.\n"
                 "`/wipe` - Admin: Wipe someone else's history."
             ),
-            inline=False
+            inline=False,
         )
 
-         # Admin Only
+        # Admin Only
         embed.add_field(
             name="**ADMIN ONLY**",
             value=(
@@ -142,28 +154,39 @@ class General(commands.Cog):
                 "`/starboard [setup|disable]` - Configure the starboard.\n"
                 "`/rankroles [level] [role] [add|remove]` - Level-up role rewards."
             ),
-            inline=False
+            inline=False,
         )
 
-        embed.set_footer(text="| for bug report use /feedback!")
+        embed.set_footer(text="for bug reports use /feedback!")
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="feedback", description="Report bugs/features.")
-    @app_commands.choices(category=[app_commands.Choice(name="Bug", value="bug"), app_commands.Choice(name="Feature", value="feature")])
-    async def feedback(self, interaction: discord.Interaction, category: app_commands.Choice[str], message: str):
+    @app_commands.choices(
+        category=[
+            app_commands.Choice(name="Bug", value="bug"),
+            app_commands.Choice(name="Feature", value="feature"),
+        ]
+    )
+    async def feedback(
+        self, interaction: discord.Interaction, category: app_commands.Choice[str], message: str
+    ):
         await interaction.response.defer(ephemeral=True)
-        await self.bot.feedback_collection.insert_one({
-            "user_id": interaction.user.id,
-            "username": interaction.user.name,
-            "category": category.value,
-            "message": message,
-            "timestamp": utils.utcnow()
-        })
-        
+        await self.bot.feedback_collection.insert_one(
+            {
+                "user_id": interaction.user.id,
+                "username": interaction.user.name,
+                "category": category.value,
+                "message": message,
+                "timestamp": utils.utcnow(),
+            }
+        )
+
         response = "ok sent."
-        if category.value == "bug": response = "**Bug Reported.** Thanks for reporting, We will look after it."
-        elif category.value == "feature": response = "**Suggestion Sent.** We will see what we can do."
-        
+        if category.value == "bug":
+            response = "**Bug Reported.** Thanks for reporting, We will look after it."
+        elif category.value == "feature":
+            response = "**Suggestion Sent.** We will see what we can do."
+
         await interaction.followup.send(response)
 
     @app_commands.command(
@@ -171,19 +194,15 @@ class General(commands.Cog):
         description="View your last conversation exchanges with Yuri.",
     )
     async def history(self, interaction: discord.Interaction, count: int = 5) -> None:
-        """Show a user their own recent chat history with Yuri.
-
-        Supports the GDPR transparency principle — deletion is via /clearhistory,
-        export is via /export, and this command lets you peek without dumping a
-        full file. The response is ephemeral so it's private to the caller.
-        """
+        """Ephemeral peek at the user's recent chat history."""
         count = max(1, min(count, 15))
 
         await interaction.response.defer(ephemeral=True)
 
         cursor = (
-            self.bot.chat_collection
-            .find({"user_id": interaction.user.id}, {"_id": 0, "parts": 1, "role": 1, "timestamp": 1})
+            self.bot.chat_collection.find(
+                {"user_id": interaction.user.id}, {"_id": 0, "parts": 1, "role": 1, "timestamp": 1}
+            )
             .sort("timestamp", -1)
             .limit(count * 2)
         )
@@ -206,7 +225,7 @@ class General(commands.Cog):
         )
         embed.set_footer(text=f"showing last {len(docs)} message(s) • /clearhistory to wipe")
 
-        for doc in docs[-count * 2:]:
+        for doc in docs[-count * 2 :]:
             role = doc.get("role", "user")
             label = "🤖 Yuri" if role == "model" else "💬 You"
             content = doc.get("parts", [""])[0]
@@ -218,7 +237,7 @@ class General(commands.Cog):
             ts = doc.get("timestamp")
             ts_str = ts.strftime("%b %d, %H:%M") if hasattr(ts, "strftime") else ""
             embed.add_field(
-                name=f"{label} — {ts_str}",
+                name=f"{label} - {ts_str}",
                 value=content or "(empty)",
                 inline=False,
             )
@@ -227,24 +246,21 @@ class General(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
         except discord.HTTPException as e:
             embed.clear_fields()
-            embed.description = f"history too long to display inline — try `/export` for the full file. ({e})"
+            embed.description = (
+                f"history too long to display inline, try `/export` for the full file. ({e})"
+            )
             await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(
         name="forgive",
         description="Apologize to Yuri and ask her to reset her attitude toward you.",
     )
-    async def forgive(self, interaction: discord.Interaction, message: Optional[str] = None) -> None:
-        """Let a user ask Yuri to drop the cold-chaos mode mid-conversation.
-
-        This doesn't wipe history (use /clearhistory for that) — it just clears
-        any active grudge state for the user and inserts an apology turn that
-        nudges the model back toward Soft Bestie energy for the next reply.
-        """
+    async def forgive(self, interaction: discord.Interaction, message: str | None = None) -> None:
+        """Ask Yuri to drop the grudge; she decides whether to accept."""
         await interaction.response.defer()
 
         apology = message or ""
-        safe_apology = utils.sanitize_for_prompt(apology) if apology else "(no message — just vibes)"
+        safe_apology = utils.sanitize_for_prompt(apology) if apology else "(no message, just vibes)"
 
         ai = self.bot.get_cog("AI")
         if ai is None:
@@ -255,19 +271,21 @@ class General(commands.Cog):
             f"The user just ran /forgive and wants to reset the vibe. "
             f"They said: '{safe_apology}'. "
             f"If they were being rude before, decide in character whether to accept "
-            f"their apology or stay cold. Don't just reset instantly — make them "
+            f"their apology or stay cold. Don't just reset instantly, make them "
             f"work for it a little if it feels fake. Stay in character."
         )
         resp, _ = await ai.get_combined_response(
             interaction.user.id, None, prompt_override=prompt_override
         )
 
-        await self.bot.chat_collection.insert_one({
-            "user_id": interaction.user.id,
-            "role": "user",
-            "parts": [f"[/forgive] {apology}".strip()],
-            "timestamp": utils.utcnow(),
-        })
+        await self.bot.chat_collection.insert_one(
+            {
+                "user_id": interaction.user.id,
+                "role": "user",
+                "parts": [f"[/forgive] {apology}".strip()],
+                "timestamp": utils.utcnow(),
+            }
+        )
 
         await utils.send_chunked_reply(interaction, resp)
 
@@ -276,12 +294,7 @@ class General(commands.Cog):
         description="How does Yuri feel about you right now? (grudge / crush status)",
     )
     async def mood(self, interaction: discord.Interaction) -> None:
-        """Surfaces Yuri's current relationship state with the calling user.
-
-        Shows whether there's an admin-set grudge against them, whether they
-        have a pending crush on someone, and whether anyone has a pending crush
-        on them. Ephemeral so it stays private.
-        """
+        """Show the caller's grudge/crush state, ephemeral."""
         await interaction.response.defer(ephemeral=True)
 
         uid = interaction.user.id
@@ -291,7 +304,7 @@ class General(commands.Cog):
         crush_received = await self.bot.crush_collection.find_one({"target_id": uid})
 
         if grudge:
-            mood_line = "**COLD CHAOS MODE.** An admin has set a grudge against you — I'm being cold/dismissive on purpose."
+            mood_line = "**COLD CHAOS MODE.** An admin has set a grudge against you, I'm being cold/dismissive on purpose."
         else:
             mood_line = "**Soft Bestie mode.** No grudges. We're chill bestie."
 
@@ -362,7 +375,9 @@ class General(commands.Cog):
         description="Translate text into another language (Yuri's energy included).",
     )
     @app_commands.choices(
-        language=[app_commands.Choice(name=label, value=code) for code, label in _SUPPORTED_LANGUAGES]
+        language=[
+            app_commands.Choice(name=label, value=code) for code, label in _SUPPORTED_LANGUAGES
+        ]
     )
     @app_commands.checks.cooldown(1, 5.0)
     async def translate(
@@ -371,11 +386,7 @@ class General(commands.Cog):
         text: str,
         language: app_commands.Choice[str],
     ) -> None:
-        """Leverages the existing Gemini pipeline to translate text.
-
-        Yuri's personality is preserved — the translation is delivered in her
-        voice, which makes it more fun than a sterile Google Translate call.
-        """
+        """Translate text through Yuri's brain so it keeps her voice."""
         if len(text) > 1500:
             await interaction.response.send_message(
                 "too long bestie, keep it under 1500 chars",
@@ -395,7 +406,7 @@ class General(commands.Cog):
 
         prompt_override = (
             f"Translate the following text into {lang_name}. "
-            f"Stay in character — deliver the translation in your voice, "
+            f"Stay in character, deliver the translation in your voice, "
             f"but keep the translation accurate. After the translation, "
             f"add one short in-character comment about the text (optional).\n\n"
             f"TEXT TO TRANSLATE:\n{safe_text}"
@@ -424,12 +435,9 @@ class General(commands.Cog):
     async def avatar(
         self,
         interaction: discord.Interaction,
-        member: Optional[discord.Member] = None,
+        member: discord.Member | None = None,
     ) -> None:
-        """Basic utility — shows a user's avatar in full resolution.
-
-        Defaults to the caller if no member is specified.
-        """
+        """Show a user's avatar at full resolution."""
         target = member or interaction.user
 
         avatar = target.display_avatar
@@ -454,6 +462,6 @@ class General(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
+
 async def setup(bot):
     await bot.add_cog(General(bot))
-    

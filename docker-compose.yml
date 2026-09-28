@@ -11,9 +11,9 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    # Discord doesn't need any inbound ports — the bot uses outbound websockets
+    # Discord needs no inbound ports, the bot uses outbound websockets
     volumes:
-      # Persist nothing on disk — all state is in MongoDB (see below)
+      # Persist nothing on disk, all state is in MongoDB (see below)
       - ./logs:/app/logs
     depends_on:
       - mongo

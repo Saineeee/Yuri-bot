@@ -1,27 +1,23 @@
-"""Reminders cog — `/remind` slash command + periodic delivery sweep.
+"""`/remind` + a 15s sweep loop that DMs due reminders.
 
-Reminders are persisted in MongoDB so they survive bot restarts (unlike the
-previous in-memory hotornot approach). A 30-second sweep loop checks for
-due reminders and DMs the user, falling back to a channel ping if DMs are
-disabled.
+Reminders live in MongoDB so they survive restarts. DM delivery falls back
+to a channel ping when the user's DMs are closed.
 """
-import discord
-from discord.ext import commands, tasks
-from discord import app_commands
 
-import re
-import logging
 import datetime
-from typing import Optional
+import logging
+import re
+
+import discord
+from discord import app_commands
+from discord.ext import commands, tasks
 
 import utils
 
 log = logging.getLogger(__name__)
 
 
-# --- Time parser ---
-# Matches things like: "10m", "2h", "1d", "30s", "1h30m", "2d4h", "90 minutes"
-# Also accepts the long forms: min, mins, hr, hrs, sec, secs, day, days
+# "10m", "2h", "1d", "30s", "1h30m", "2d4h", "90 minutes", ...
 _TIME_RE = re.compile(
     r"(?:(\d+)\s*(?:d|days?))?"
     r"(?:(\d+)\s*(?:h|hrs?|hours?))?"
@@ -30,20 +26,17 @@ _TIME_RE = re.compile(
     re.IGNORECASE,
 )
 
-MAX_REMINDER_DELAY_SECS  = 30 * 24 * 3600   # 30 days cap (matches chat history TTL)
-MAX_REMINDER_MSG_CHARS   = 800
-REMINDER_SWEEP_SECS      = 15
+MAX_REMINDER_DELAY_SECS = 30 * 24 * 3600  # 30 days, matches chat history TTL
+MAX_REMINDER_MSG_CHARS = 800
+REMINDER_SWEEP_SECS = 15
 
 
-def parse_time_to_seconds(text: str) -> Optional[int]:
-    """Parse a human-friendly duration string like '1h30m' into seconds.
-
-    Returns None if the input is empty, unparseable, or zero.
-    """
+def parse_time_to_seconds(text: str) -> int | None:
+    """Parse '1h30m' (or a bare minute count) into seconds, None if invalid."""
     if not text:
         return None
     text = text.strip().lower()
-    # Allow bare integers to be treated as minutes ("30" → 30 min)
+    # bare integers count as minutes
     if text.isdigit():
         mins = int(text)
         return mins * 60 if mins > 0 else None
@@ -65,10 +58,6 @@ class Reminders(commands.Cog):
 
     def cog_unload(self) -> None:
         self._sweep.cancel()
-
-    # ------------------------------------------------------------------
-    # Slash command
-    # ------------------------------------------------------------------
 
     @app_commands.command(
         name="remind",
@@ -113,25 +102,30 @@ class Reminders(commands.Cog):
 
         deliver_at = utils.utcnow() + datetime.timedelta(seconds=secs)
 
-        await self.bot.reminders_collection.insert_one({
-            "user_id":     interaction.user.id,
-            "username":    interaction.user.name,
-            "channel_id":  interaction.channel_id,
-            "guild_id":    interaction.guild_id,
-            "message":     message,
-            "deliver_at":  deliver_at,
-            "created_at":  utils.utcnow(),
-        })
+        await self.bot.reminders_collection.insert_one(
+            {
+                "user_id": interaction.user.id,
+                "username": interaction.user.name,
+                "channel_id": interaction.channel_id,
+                "guild_id": interaction.guild_id,
+                "message": message,
+                "deliver_at": deliver_at,
+                "created_at": utils.utcnow(),
+            }
+        )
 
-        # Build a human-readable summary of the delay
         parts = []
         days, rem = divmod(secs, 86400)
         hrs, rem = divmod(rem, 3600)
         mins, secs = divmod(rem, 60)
-        if days: parts.append(f"{days}d")
-        if hrs:  parts.append(f"{hrs}h")
-        if mins: parts.append(f"{mins}m")
-        if secs: parts.append(f"{secs}s")
+        if days:
+            parts.append(f"{days}d")
+        if hrs:
+            parts.append(f"{hrs}h")
+        if mins:
+            parts.append(f"{mins}m")
+        if secs:
+            parts.append(f"{secs}s")
         delay_str = " ".join(parts) or f"{secs}s"
 
         await interaction.followup.send(
@@ -140,13 +134,8 @@ class Reminders(commands.Cog):
             ephemeral=True,
         )
 
-    # ------------------------------------------------------------------
-    # Sweep loop
-    # ------------------------------------------------------------------
-
     @tasks.loop(seconds=REMINDER_SWEEP_SECS)
     async def _sweep(self) -> None:
-        """Deliver any reminders whose deliver_at has passed."""
         try:
             now = utils.utcnow()
             cursor = self.bot.reminders_collection.find({"deliver_at": {"$lte": now}})
@@ -164,8 +153,7 @@ class Reminders(commands.Cog):
         """DM the user; fall back to pinging them in the original channel."""
         user_id = doc["user_id"]
         message = doc.get("message", "")
-        # Sanitize the stored message before echoing — defensive against any
-        # mention-shaped text the user themselves may have included at create time
+        # echo back through sanitize: the user wrote it, but mentions must not ping
         safe_msg = utils.sanitize_for_discord(message)
         created_at = doc.get("created_at")
 
@@ -186,16 +174,15 @@ class Reminders(commands.Cog):
                 log.warning("reminder: user %s no longer exists.", user_id)
                 return
 
-        # Try DM first
+        # try DM first, fall back to pinging in the original channel
         try:
             await user.send(embed=embed)
             return
         except discord.Forbidden:
-            pass  # DMs disabled — fall through to channel ping
+            pass
         except Exception as e:
             log.warning("reminder DM failed for user %s: %s", user_id, e)
 
-        # Fallback: ping in the original channel
         channel_id = doc.get("channel_id")
         if channel_id is None:
             log.warning("reminder: no channel fallback for user %s.", user_id)

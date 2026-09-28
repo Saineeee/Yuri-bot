@@ -1,22 +1,24 @@
-"""Tests for cogs/levelling.py — XP curve + level computation.
+"""Tests for cogs/levelling.py - XP curve + level computation.
 
 The levelling cog's core math (xp_for_level, level_from_xp) is pure and
 testable without Discord. We verify the curve is monotonic and the
 round-trip (xp → level → xp) is consistent.
 """
-import unittest
-import os
-import sys
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import os  # noqa: E402  # mocks must load first
+import sys  # noqa: E402  # mocks must load first
+import unittest  # noqa: E402  # mocks must load first
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Mock heavy deps before importing the cog
-from unittest.mock import MagicMock
-sys.modules['discord'] = MagicMock()
-sys.modules['discord.ext'] = MagicMock()
-sys.modules['discord.ext.commands'] = MagicMock()
-sys.modules['discord.ext.tasks'] = MagicMock()
-sys.modules['discord.app_commands'] = MagicMock()
+from unittest.mock import MagicMock  # noqa: E402  # mocks must load first
+
+sys.modules["discord"] = MagicMock()
+sys.modules["discord.ext"] = MagicMock()
+sys.modules["discord.ext.commands"] = MagicMock()
+sys.modules["discord.ext.tasks"] = MagicMock()
+sys.modules["discord.app_commands"] = MagicMock()
 
 
 class MockCog:
@@ -24,6 +26,7 @@ class MockCog:
     def listener(cls):
         def decorator(func):
             return func
+
         return decorator
 
     def __init__(self, *args, **kwargs):
@@ -36,22 +39,26 @@ mock_ext = MagicMock()
 mock_ext.commands = mock_commands
 
 # Force-reset so we use our mock
-sys.modules['discord.ext'] = mock_ext
-sys.modules['discord.ext.commands'] = mock_commands
-sys.modules['discord.ext.tasks'] = MagicMock()
-sys.modules['discord.app_commands'] = MagicMock()
+sys.modules["discord.ext"] = mock_ext
+sys.modules["discord.ext.commands"] = mock_commands
+sys.modules["discord.ext.tasks"] = MagicMock()
+sys.modules["discord.app_commands"] = MagicMock()
 
 # Delete any cached import
-sys.modules.pop('cogs.levelling', None)
+sys.modules.pop("cogs.levelling", None)
 
-from cogs.levelling import xp_for_level, level_from_xp, XP_PER_MESSAGE
+from cogs.levelling import (  # noqa: E402  # mocks must load first
+    XP_PER_MESSAGE,
+    level_from_xp,
+    xp_for_level,
+)
 
 
 class TestXPCurve(unittest.TestCase):
     """Verify the XP curve is well-behaved."""
 
     def test_level_0_requires_no_xp(self):
-        # Level 0 is the starting level — 0 XP needed.
+        # Level 0 is the starting level - 0 XP needed.
         self.assertEqual(xp_for_level(0), 0)
         # Level 1: 5*1 + 50*1 = 55
         self.assertEqual(xp_for_level(1), 55)
@@ -67,7 +74,9 @@ class TestXPCurve(unittest.TestCase):
         prev = 0
         for level in range(1, 100):
             current = xp_for_level(level)
-            self.assertGreater(current, prev, f"Level {level} must require more XP than level {level-1}")
+            self.assertGreater(
+                current, prev, f"Level {level} must require more XP than level {level-1}"
+            )
             prev = current
 
     def test_level_from_xp_at_boundary(self):
@@ -107,5 +116,5 @@ class TestXPCurve(unittest.TestCase):
         self.assertGreater(XP_PER_MESSAGE, 0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

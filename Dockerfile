@@ -41,7 +41,7 @@ COPY . .
 RUN useradd -m -u 1000 yuri && chown -R yuri:yuri /app
 USER yuri
 
-# Health check — if the process dies, Docker will restart it
+# Health check: fails if DISCORD_TOKEN is missing
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import os, sys; sys.exit(0 if os.getenv('DISCORD_TOKEN') else 1)"
 

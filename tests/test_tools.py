@@ -1,4 +1,4 @@
-"""Tests for cogs/tools.py — the function-calling tools (web_search, get_time_in_timezone, calculate).
+"""Tests for cogs/tools.py - the function-calling tools (web_search, get_time_in_timezone, calculate).
 
 These are pure-logic tests (no Discord, no Gemini) that verify:
   - calculate() handles valid + invalid expressions correctly
@@ -6,30 +6,30 @@ These are pure-logic tests (no Discord, no Gemini) that verify:
   - dispatch_tool() routes to the right handler
   - get_tool_declarations() returns the expected set
 """
-import unittest
-import os
-import sys
-import asyncio
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import os  # noqa: E402  # mocks must load first
+import sys  # noqa: E402  # mocks must load first
+import unittest  # noqa: E402  # mocks must load first
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Mock heavy deps before importing the cog
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402  # mocks must load first
 
-sys.modules['discord'] = MagicMock()
-sys.modules['discord.ext'] = MagicMock()
-sys.modules['discord.ext.commands'] = MagicMock()
-sys.modules['discord.ext.tasks'] = MagicMock()
-sys.modules['discord.app_commands'] = MagicMock()
-sys.modules['pytz'] = __import__('pytz')  # use real pytz for timezone tests
+sys.modules["discord"] = MagicMock()
+sys.modules["discord.ext"] = MagicMock()
+sys.modules["discord.ext.commands"] = MagicMock()
+sys.modules["discord.ext.tasks"] = MagicMock()
+sys.modules["discord.app_commands"] = MagicMock()
+sys.modules["pytz"] = __import__("pytz")  # use real pytz for timezone tests
 
-from cogs.tools import (
-    calculate,
-    get_time_in_timezone,
-    web_search,
-    dispatch_tool,
-    get_tool_declarations,
+from cogs.tools import (  # noqa: E402  # mocks must load first
     TOOL_REGISTRY,
+    calculate,
+    dispatch_tool,
+    get_time_in_timezone,
+    get_tool_declarations,
+    web_search,
 )
 
 
@@ -50,7 +50,7 @@ class TestCalculate(unittest.TestCase):
         self.assertEqual(calculate("3.5 + 1.5"), "5.0")
 
     def test_math_functions(self):
-        import math
+
         self.assertEqual(calculate("sqrt(144)"), "12.0")
         self.assertAlmostEqual(float(calculate("log(e)")), 1.0, places=10)
         self.assertAlmostEqual(float(calculate("sin(0)")), 0.0, places=10)
@@ -58,7 +58,8 @@ class TestCalculate(unittest.TestCase):
     def test_constants(self):
         # pi and e should be available
         result = calculate("pi")
-        import math
+        import math  # noqa: E402  # mocks must load first
+
         self.assertAlmostEqual(float(result), math.pi, places=10)
 
     def test_empty_returns_error(self):
@@ -84,10 +85,10 @@ class TestGetTimeInTimezone(unittest.IsolatedAsyncioTestCase):
 
     def test_valid_timezone(self):
         result = get_time_in_timezone("Asia/Kolkata")
-        # The format is "Monday, January 01, 2024 — 12:00 PM"
+        # The format is "Monday, January 01, 2024 - 12:00 PM"
         # Just check it returns something with a date + time pattern
-        self.assertIn(",", result)   # "Monday, January..."
-        self.assertIn(":", result)   # time has a colon
+        self.assertIn(",", result)  # "Monday, January..."
+        self.assertIn(":", result)  # time has a colon
         self.assertIn("AM", result.upper())  # AM or PM
         self.assertNotIn("Unknown", result)
 
@@ -109,12 +110,12 @@ class TestWebSearch(unittest.IsolatedAsyncioTestCase):
     """web_search() delegates to utils.search_web."""
 
     async def test_returns_string(self):
-        with patch('utils.search_web', new=AsyncMock(return_value="fake results")):
+        with patch("utils.search_web", new=AsyncMock(return_value="fake results")):
             result = await web_search("test query")
             self.assertEqual(result, "fake results")
 
     async def test_returns_no_results_message(self):
-        with patch('utils.search_web', new=AsyncMock(return_value=None)):
+        with patch("utils.search_web", new=AsyncMock(return_value=None)):
             result = await web_search("test query")
             self.assertIn("No web results", result)
 
@@ -164,5 +165,5 @@ class TestToolRegistry(unittest.TestCase):
         self.assertIn("calculate", names)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

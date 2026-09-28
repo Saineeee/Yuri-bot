@@ -7,20 +7,22 @@ Verifies:
   - _maybe_auto_speak() no-ops correctly when voice mode is off,
     when Yuri isn't in a VC, or when the VoiceTTS cog isn't loaded
 """
-import unittest
-import os
-import sys
-import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import asyncio  # noqa: E402  # mocks must load first
+import os  # noqa: E402  # mocks must load first
+import sys  # noqa: E402  # mocks must load first
+import unittest  # noqa: E402  # mocks must load first
+from unittest.mock import AsyncMock, MagicMock  # noqa: E402  # mocks must load first
 
-# --- Robust mock setup (same pattern as test_reminders.py) ---
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+
 class MockCog:
     @classmethod
     def listener(cls):
         def decorator(func):
             return func
+
         return decorator
 
     def __init__(self, *args, **kwargs):
@@ -30,8 +32,10 @@ class MockCog:
 def command_decorator(*args, **kwargs):
     if len(args) == 1 and callable(args[0]) and not kwargs:
         return args[0]
+
     def deco(fn):
         return fn
+
     return deco
 
 
@@ -57,41 +61,44 @@ mock_app_commands.Choice = MagicMock()
 mock_discord.app_commands = mock_app_commands
 
 # Force-reset
-sys.modules['discord'] = mock_discord
-sys.modules['discord.ext'] = mock_ext
-sys.modules['discord.ext.commands'] = mock_commands
-sys.modules['discord.ext.tasks'] = MagicMock()
-sys.modules['discord.app_commands'] = mock_app_commands
+sys.modules["discord"] = mock_discord
+sys.modules["discord.ext"] = mock_ext
+sys.modules["discord.ext.commands"] = mock_commands
+sys.modules["discord.ext.tasks"] = MagicMock()
+sys.modules["discord.app_commands"] = mock_app_commands
 
 # Mock google.genai so AI cog can be instantiated without a real API key
 mock_google = MagicMock()
 mock_genai = MagicMock()
 mock_types = MagicMock()
 mock_google.genai = mock_genai
-sys.modules['google'] = mock_google
-sys.modules['google.genai'] = mock_genai
-sys.modules['google.genai.types'] = mock_types
+sys.modules["google"] = mock_google
+sys.modules["google.genai"] = mock_genai
+sys.modules["google.genai.types"] = mock_types
 
 # Mock groq + together so AI cog __init__ doesn't fail
-sys.modules['groq'] = MagicMock()
-sys.modules['together'] = MagicMock()
+sys.modules["groq"] = MagicMock()
+sys.modules["together"] = MagicMock()
 
 # Delete cached cog modules so they re-import against our mocks.
-# IMPORTANT: do NOT pop 'cogs.ai' here — test_ai.py needs its own version
+# IMPORTANT: do NOT pop 'cogs.ai' here - test_ai.py needs its own version
 # cached in sys.modules for patch('cogs.ai.utils') to work correctly.
 # We import AI at module level below, which will use whatever version is
 # already cached (test_ai.py's, if collection order puts it first) or import
 # a fresh one with our mocks if it's not cached yet.
-for _mod in ('cogs.voicetts', 'cogs.tools', 'cogs.memory', 'cogs.prompts'):
+for _mod in ("cogs.voicetts", "cogs.tools", "cogs.memory", "cogs.prompts"):
     sys.modules.pop(_mod, None)
 
 # Set dummy env vars for AI cog pre-flight
-os.environ['GEMINI_API_KEY'] = 'dummy'
-os.environ['GROQ_API_KEY'] = 'dummy'
+os.environ["GEMINI_API_KEY"] = "dummy"
+os.environ["GROQ_API_KEY"] = "dummy"
 
-from cogs.voicetts import VoiceTTS, MAX_TTS_CHARS
-from cogs.ai import AI  # import at module level so test_ai.py can re-import cogs.ai
-                        # with its own mocks without breaking our reference
+from cogs.ai import (  # noqa: E402  # import at module level so test_ai.py can re-import
+    AI,
+)
+from cogs.voicetts import MAX_TTS_CHARS, VoiceTTS  # noqa: E402  # mocks must load first
+
+# with its own mocks without breaking our reference
 
 
 class TestVoiceModeToggle(unittest.IsolatedAsyncioTestCase):
@@ -271,6 +278,7 @@ class TestSpeakInGuildVC(unittest.IsolatedAsyncioTestCase):
 
         async def mock_tts(text):
             return b"fake_audio"
+
         cog._generate_tts = mock_tts
 
         await cog.speak_in_guild_vc(123, "hello")
@@ -288,6 +296,7 @@ class TestSpeakInGuildVC(unittest.IsolatedAsyncioTestCase):
 
         async def mock_tts(text):
             return b"fake_audio"
+
         cog._generate_tts = mock_tts
 
         result = await cog.speak_in_guild_vc(123, "hello")
@@ -371,26 +380,26 @@ class TestVoiceCommandSourceAssertions(unittest.TestCase):
 
     @staticmethod
     def _read(path):
-        full = os.path.join(os.path.dirname(__file__), '..', path)
-        with open(full, 'r', encoding='utf-8') as f:
+        full = os.path.join(os.path.dirname(__file__), "..", path)
+        with open(full, encoding="utf-8") as f:
             return f.read()
 
     def test_voice_command_exists_in_voicetts(self):
-        src = self._read('cogs/voicetts.py')
+        src = self._read("cogs/voicetts.py")
         self.assertIn('name="voice"', src)
-        self.assertIn('is_voice_mode_enabled', src)
-        self.assertIn('speak_in_guild_vc', src)
-        self.assertIn('is_in_vc', src)
+        self.assertIn("is_voice_mode_enabled", src)
+        self.assertIn("speak_in_guild_vc", src)
+        self.assertIn("is_in_vc", src)
 
     def test_auto_speak_hook_in_ai_cog(self):
-        src = self._read('cogs/ai.py')
-        self.assertIn('_maybe_auto_speak', src)
-        self.assertIn('VoiceTTS', src)
+        src = self._read("cogs/ai.py")
+        self.assertIn("_maybe_auto_speak", src)
+        self.assertIn("VoiceTTS", src)
 
     def test_help_lists_voice_command(self):
-        src = self._read('cogs/general.py')
-        self.assertIn('/voice', src)
+        src = self._read("cogs/general.py")
+        self.assertIn("/voice", src)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

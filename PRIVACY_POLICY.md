@@ -12,7 +12,7 @@ This Privacy Policy explains how Yuri ("the Bot") collects, uses, stores, and pr
 To function properly as a conversational AI and social bot, Yuri collects the following data:
 
 * **Discord Account Data:** User IDs, Display Names, Avatar URLs, Account Creation Dates, and Server Roles.
-* **Presence Data:** Current status (Online, DND) and rich presence activities (e.g., listening to Spotify, playing games) — captured only at the exact moment a command like `/roast` or `/rate` is run, not monitored continuously. Users can opt out via `/privacy`.
+* **Presence Data:** Current status (Online, DND) and rich presence activities (e.g., listening to Spotify, playing games) - captured only at the exact moment a command like `/roast` or `/rate` is run, not monitored continuously. Users can opt out via `/privacy`.
 * **Message Content:** Text, uploaded images, and audio attachments (voice notes) are processed **only** when the Bot is explicitly mentioned (`@Yuri`) or directly replied to.
 * **Voice Channel Audio (outbound only):** When auto-speak is enabled and Yuri is in a voice channel, her text replies are converted to speech and played in the VC. Yuri does **not** listen to or record user voice audio. The Bot only sends audio, never receives it.
 * **Image Generation Prompts:** Text prompts submitted via `/imagine` are processed by Google Imagen to generate images.
@@ -35,11 +35,11 @@ Your data is used strictly to provide the Bot's core features:
 * **AI Inference:** Sending your text, images, or audio to our AI providers to generate Yuri's responses. This may include function-calling tools (web search, timezone lookup, calculation) when the model determines they're needed.
 * **Streaming Responses:** AI responses are streamed token-by-token to Discord for faster perceived response times. The streaming uses the same provider chain as non-streaming responses.
 * **Conversation Memory:** Maintaining a 30-day rolling history of your chat with the Bot so it can remember the context of the conversation.
-* **Long-Term Memory Summarization:** When chat history ages out (after ~25 days), Yuri summarizes it into a short, permanent "dossier" paragraph. This dossier contains the model's impression of your relationship — **not** your raw messages. It allows Yuri to remember you across months/years without unbounded database growth.
+* **Long-Term Memory Summarization:** When chat history ages out (after ~25 days), Yuri summarizes it into a short, permanent "dossier" paragraph. This dossier contains the model's impression of your relationship - **not** your raw messages. It allows Yuri to remember you across months/years without unbounded database growth.
 * **Voice Channel TTS:** When auto-speak is enabled, Yuri's text replies are converted to speech using Groq PlayAI TTS (or gTTS as a fallback) and played in the voice channel. The TTS provider receives the reply text only.
 * **Image Generation:** `/imagine` prompts are enhanced by Yuri's AI, then sent to Google Imagen to generate an image. The enhanced prompt + original prompt are stored for 7 days for abuse tracking.
 * **Social Commands:** Analyzing your Discord profile and chat history to power personalized features like `/roast`, `/rate`, and `/ship`.
-* **Levelling:** Counting your messages (with a 60-second cooldown) to award XP and levels. Message **content** is not stored for XP — only the count.
+* **Levelling:** Counting your messages (with a 60-second cooldown) to award XP and levels. Message **content** is not stored for XP - only the count.
 * **Starboard:** When a message receives enough ⭐ reactions, its content + author are posted to the configured starboard channel.
 
 **We do not use your data to train our own machine learning models, nor do we sell your data.**
@@ -52,8 +52,8 @@ All data is stored in a MongoDB database encrypted at rest. All connections are 
 
 | Data Type | Collection | Retention |
 |---|---|---|
-| Conversation history | `chat_history` | **30 days** — auto-purged via MongoDB TTL index |
-| Long-term memory dossiers | `memory_dossiers` | **Permanent** — anonymized summaries (not raw messages). One doc per user, capped at 2000 chars. |
+| Conversation history | `chat_history` | **30 days** - auto-purged via MongoDB TTL index |
+| Long-term memory dossiers | `memory_dossiers` | **Permanent** - anonymized summaries (not raw messages). One doc per user, capped at 2000 chars. |
 | Server configuration | `server_configs` | Until manually changed by a server admin |
 | Crush records | `crushes` | Until the match resolves or is removed |
 | Grudge records | `grudges` | Until an admin removes the record |
@@ -64,7 +64,7 @@ All data is stored in a MongoDB database encrypted at rest. All connections are 
 | Reaction-role mappings | `reaction_roles` | Until an admin removes the message |
 | Starboard entries | `starboard` | Until an admin removes the starboard or the source message |
 | XP / level data | `user_xp` | Until you leave the server or request deletion |
-| Image generation logs | `image_generations` | **7 days** — auto-purged via MongoDB TTL index (abuse tracking) |
+| Image generation logs | `image_generations` | **7 days** - auto-purged via MongoDB TTL index (abuse tracking) |
 
 ---
 
@@ -77,7 +77,7 @@ Because Yuri is an AI bot, your inputs (messages, images, audio) are transmitted
 | **Google (Gemini API)** | Message text, images | Primary AI text + vision generation, streaming responses, function calling, long-term memory summarization |
 | **Google (Imagen API)** | Enhanced image prompts | Image generation via `/imagine` |
 | **Groq** | Message text, images, audio | Fallback AI generation; voice note transcription via Whisper; voice channel TTS via PlayAI |
-| **Together AI** | Message text | Optional fine-tuned model fallback — only contacted when all primary providers are unavailable. If the operator has not configured this integration, your data is **never** sent to Together AI. |
+| **Together AI** | Message text | Optional fine-tuned model fallback - only contacted when all primary providers are unavailable. If the operator has not configured this integration, your data is **never** sent to Together AI. |
 | **DuckDuckGo** | Search query derived from your message | Web search tool (called autonomously by Gemini when needed) |
 | **gTTS (Google Translate TTS)** | Reply text | Fallback TTS for voice channel speech (only if Groq TTS fails) |
 | **Sentry** | Error metadata (no message content, no user PII) | Optional error tracking. Only active if the operator sets `SENTRY_DSN`. Configured to NOT send PII. |
@@ -90,16 +90,16 @@ You have complete control over your conversational data.
 
 * **Instant Self-Deletion:** Use `/clearhistory` in any server where the Bot is present to instantly and permanently delete your entire conversation history. This action is irreversible.
 * **Data Export:** Use `/export` to download your full chat history as a JSON file (DM'd to you). This implements GDPR Article 20 (right to data portability).
-* **History Viewer:** Use `/history` to view your recent messages with Yuri (ephemeral — only you see it).
+* **History Viewer:** Use `/history` to view your recent messages with Yuri (ephemeral - only you see it).
 * **Privacy Opt-Out:** Use `/privacy` to opt out of rich-presence data collection (Spotify, games, custom status). When opted out, `/roast`, `/rate`, `/ship`, and `/compatibility` will not include your presence data.
 * **Manual Requests:** To request deletion of other data (feedback submissions, grudge records, crush data, memory dossiers, XP records), use the `/feedback` command. The developer will confirm deletion once processed.
 * **Automatic Expiry:** Conversation history is deleted automatically after 30 days. Image generation logs after 7 days. Reminders after delivery.
 
-> **Note on Long-Term Memory Dossiers:** These are permanent summaries of your past conversations. They do NOT contain your raw messages — only Yuri's AI-generated impression. To request deletion of your dossier, use `/feedback`.
+> **Note on Long-Term Memory Dossiers:** These are permanent summaries of your past conversations. They do NOT contain your raw messages - only Yuri's AI-generated impression. To request deletion of your dossier, use `/feedback`.
 
 ---
 
-## 6. Voice Channel Data — Important Details
+## 6. Voice Channel Data - Important Details
 
 * **Yuri does NOT listen to you.** The voice channel TTS feature is **one-way (outbound only)**. Yuri can speak in the VC but cannot hear or record user voice audio.
 * **Auto-speak behavior:** When `/voice on` is enabled (default) and Yuri is in a VC, her text replies to your @mentions are automatically converted to speech and played in the VC. Disable with `/voice off`.

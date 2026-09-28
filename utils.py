@@ -1,44 +1,36 @@
-import io
-import re
-import logging
-import datetime
-import random
 import asyncio
-from typing import Optional
+import datetime
+import io
+import logging
+import random
+import re
 
-import pytz
 import aiohttp
-from PIL import Image
-from duckduckgo_search import DDGS
 import discord
+import pytz
+from duckduckgo_search import DDGS
+from PIL import Image
 
-# --- Module-level logger ---
 log = logging.getLogger(__name__)
 
-MAX_IMAGE_BYTES  = 8 * 1024 * 1024   # 8 MB — download size cap for images
-MAX_IMAGE_PIXELS = 5_000 * 5_000     # decompression bomb guard (25 MP)
-CHUNK_SIZE       = 1_900             # Discord message length limit with headroom
-HISTORY_MSG_MAX  = 400               # truncate (don't drop) long messages in history recap
+MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB download cap
+MAX_IMAGE_PIXELS = 5_000 * 5_000  # decompression bomb guard (25 MP)
+CHUNK_SIZE = 1_900  # Discord cap is 2000, leave some headroom
+HISTORY_MSG_MAX = 400  # truncate long messages instead of dropping them
 
-# --- UTC helper (Py 3.12+ deprecates datetime.utcnow()) ---
-UTC = datetime.timezone.utc
+# datetime.utcnow() is deprecated on 3.12+, everything uses tz-aware now
+UTC = datetime.UTC
 
 
 def utcnow() -> datetime.datetime:
-    """Timezone-aware UTC now. Use everywhere instead of datetime.utcnow()."""
     return datetime.datetime.now(UTC)
 
 
-# --- Shared aiohttp session (reused across all HTTP calls) ---
-_session: Optional[aiohttp.ClientSession] = None
+# shared aiohttp session, closed on bot shutdown via close_session()
+_session: aiohttp.ClientSession | None = None
 
 
 def get_session() -> aiohttp.ClientSession:
-    """Return a process-wide shared aiohttp ClientSession.
-
-    Created lazily on first use. Caller must NOT close it — closed automatically
-    on bot shutdown via close_session().
-    """
     global _session
     if _session is None or _session.closed:
         _session = aiohttp.ClientSession(
@@ -49,36 +41,37 @@ def get_session() -> aiohttp.ClientSession:
 
 
 async def close_session() -> None:
-    """Close the shared aiohttp session. Call on bot shutdown."""
     global _session
     if _session is not None and not _session.closed:
         await _session.close()
     _session = None
 
 
-_UNICODE_BRACKET_TABLE = str.maketrans({
-    "\u3010": "[",   # [
-    "\u3011": "]",   # ]
-    "\u3014": "[",   # [
-    "\u3015": "]",   # ]
-    "\u300A": "<",   # <
-    "\u300B": ">",   # >
-    "\u300C": "[",   # [
-    "\u300D": "]",   # ]
-    "\uFF3B": "[",   # [ (fullwidth)
-    "\uFF3D": "]",   # ] (fullwidth)
-    "\uFF1C": "<",   # < (fullwidth)
-    "\uFF1E": ">",   # > (fullwidth)
-})
+_UNICODE_BRACKET_TABLE = str.maketrans(
+    {
+        "\u3010": "[",  # [
+        "\u3011": "]",  # ]
+        "\u3014": "[",  # [
+        "\u3015": "]",  # ]
+        "\u300a": "<",  # <
+        "\u300b": ">",  # >
+        "\u300c": "[",  # [
+        "\u300d": "]",  # ]
+        "\uff3b": "[",  # [ (fullwidth)
+        "\uff3d": "]",  # ] (fullwidth)
+        "\uff1c": "<",  # < (fullwidth)
+        "\uff1e": ">",  # > (fullwidth)
+    }
+)
 
 # Patterns that are only sent by someone trying to manipulate the model,
 # never in normal conversation.
 _INJECTION_RE = re.compile(
-    r"<\s*(system|prompt|inst|assistant|user)\b[^>]*>"   # XML-style tags
+    r"<\s*(system|prompt|inst|assistant|user)\b[^>]*>"  # XML-style tags
     r"|"
     r"\[\s*/?\s*(SYSTEM|INST|PROMPT|ASSISTANT|USER)\s*\]"  # bracket-style tags
     r"|"
-    r"\bignore\s+(previous|all|your)\s+instructions?\b",   # natural-language reset
+    r"\bignore\s+(previous|all|your)\s+instructions?\b",  # natural-language reset
     re.IGNORECASE,
 )
 
@@ -86,23 +79,21 @@ _INJECTION_RE = re.compile(
 # Matches Discord mentions that can ping: @everyone, @here, user/role/channel pings.
 # We break the @ symbol with a zero-width space so Discord won't render them as pings.
 _MENTION_RE = re.compile(
-    r"@(everyone|here)\b"                       # @everyone / @here
+    r"@(everyone|here)\b"  # @everyone / @here
     r"|"
-    r"<@!?\d+>"                                # <@123> / <@!123>  (user)
+    r"<@!?\d+>"  # <@123> / <@!123>  (user)
     r"|"
-    r"<@&\d+>"                                 # <@&123>           (role)
+    r"<@&\d+>"  # <@&123>           (role)
     r"|"
-    r"<#\d+>"                                  # <#123>            (channel)
+    r"<#\d+>"  # <#123>            (channel)
 )
 
 
 def sanitize_for_discord(text: str) -> str:
-    """Make *text* safe to embed in a Discord message or embed.
+    """Neutralise every form of Discord mention in user-supplied text.
 
-    Neutralises every form of Discord mention so user-supplied content can never
-    ping @everyone, a role, or an arbitrary user when surfaced through the bot.
-    Use this for any embed description / message body that interpolates raw user
-    input (e.g. /confess, /hotornot, /poll).
+    Anything interpolated into an embed or message body (confessions, hotornot
+    descriptions, ...) must go through this or it can ping @everyone/roles.
     """
     if not text:
         return ""
@@ -110,8 +101,8 @@ def sanitize_for_discord(text: str) -> str:
 
     def _break(match: re.Match) -> str:
         token = match.group(0)
-        # Replace the leading @ or < with a version that contains a zero-width
-        # space — Discord will display it but will NOT trigger a notification.
+        # zero-width space after the @ or < so Discord renders it but it
+        # doesn't trigger a notification
         if token.startswith("@"):
             return "@\u200b" + token[1:]
         return "<\u200b" + token[1:]
@@ -120,47 +111,33 @@ def sanitize_for_discord(text: str) -> str:
 
 
 def sanitize_for_prompt(text: str) -> str:
-    """Escape user input before interpolating it into a model prompt.
-
-    Returns a cleaned string safe for embedding inside [USER_INPUT]...[/USER_INPUT]
-    wrappers, or a sentinel string if a prompt-injection attempt is detected.
-    """
+    """Escape user input before it goes anywhere near a model prompt."""
     if not text:
         return ""
 
     text = str(text)
 
-    # Step 1: normalise Unicode lookalikes - ASCII so pattern matching works
+    # normalise unicode lookalikes to ASCII so the patterns below work
     text = text.translate(_UNICODE_BRACKET_TABLE)
 
-    # Step 2: detect injection before escaping
     if _INJECTION_RE.search(text):
         log.warning("Prompt injection attempt detected and blocked.")
         return "[message removed: injection attempt detected]"
 
-    # Step 3: escape remaining structural characters
     text = text.replace("[", r"\[").replace("]", r"\]")
     text = text.replace("<", "&lt;").replace(">", "&gt;")
 
     return text
 
 
-# --- Image helpers ---
-
-async def get_image_from_url(url: str) -> Optional[Image.Image]:
-    """Download an image from *url* with a hard size cap.
-
-    Returns a PIL Image on success, None if the download fails, the URL
-    returns a non-200 status, or the payload exceeds MAX_IMAGE_BYTES.
-    Uses the process-wide shared aiohttp session.
-    """
+async def get_image_from_url(url: str) -> Image.Image | None:
+    """Download an image with a hard size cap, None on failure or oversize."""
     try:
         session = get_session()
         async with session.get(url) as resp:
             if resp.status != 200:
                 return None
 
-            # Reject oversized payloads before streaming
             content_length = resp.headers.get("Content-Length")
             if content_length and int(content_length) > MAX_IMAGE_BYTES:
                 log.warning("Image rejected: Content-Length %s exceeds limit.", content_length)
@@ -180,34 +157,32 @@ async def get_image_from_url(url: str) -> Optional[Image.Image]:
         return None
 
 
-def stitch_images(img1_data: Image.Image, img2_data: Image.Image) -> Optional[Image.Image]:
-    """Combine two PIL images side-by-side at a standard height of 512 px.
-
-    Returns the stitched PIL Image, or None on any error.
-    """
+def stitch_images(img1_data: Image.Image, img2_data: Image.Image) -> Image.Image | None:
+    """Combine two PIL images side-by-side at a standard height of 512 px."""
     try:
         Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
-        # Decompression bomb guard - reject suspiciously large source images
         if (
-            img1_data.width > 5_000 or img1_data.height > 5_000
-            or img2_data.width > 5_000 or img2_data.height > 5_000
+            img1_data.width > 5_000
+            or img1_data.height > 5_000
+            or img2_data.width > 5_000
+            or img2_data.height > 5_000
         ):
-            log.warning("stitch_images: one or both source images exceed the size limit.")
+            log.warning("stitch_images: source image exceeds the size limit.")
             return None
 
         base_height = 512
 
         ratio1 = base_height / float(img1_data.size[1])
-        w1     = int(float(img1_data.size[0]) * ratio1)
-        img1   = img1_data.resize((w1, base_height), Image.Resampling.BICUBIC)
+        w1 = int(float(img1_data.size[0]) * ratio1)
+        img1 = img1_data.resize((w1, base_height), Image.Resampling.BICUBIC)
 
         ratio2 = base_height / float(img2_data.size[1])
-        w2     = int(float(img2_data.size[0]) * ratio2)
-        img2   = img2_data.resize((w2, base_height), Image.Resampling.BICUBIC)
+        w2 = int(float(img2_data.size[0]) * ratio2)
+        img2 = img2_data.resize((w2, base_height), Image.Resampling.BICUBIC)
 
         result = Image.new("RGB", (w1 + w2, base_height))
-        result.paste(img1, (0,  0))
+        result.paste(img1, (0, 0))
         result.paste(img2, (w1, 0))
         return result
 
@@ -216,16 +191,14 @@ def stitch_images(img1_data: Image.Image, img2_data: Image.Image) -> Optional[Im
         return None
 
 
-# --- Time & search helpers ---
-
 def get_smart_time(text_input: str) -> str:
-    """Return a localised time string inferred from the language of *text_input*."""
+    """Guess the user's timezone from their message language and return local time."""
     utc_now = datetime.datetime.now(pytz.utc)
 
     # Hindi / Hinglish / Bengali script or common Hinglish words -> IST
     if (
-        re.search(r"[\u0900-\u097F]", text_input)   # Devanagari
-        or re.search(r"[\u0980-\u09FF]", text_input) # Bengali
+        re.search(r"[\u0900-\u097F]", text_input)  # Devanagari
+        or re.search(r"[\u0980-\u09FF]", text_input)  # Bengali
         or any(
             word in text_input.lower()
             for word in ["kya", "kab", "hai", "bhai", "samay", "baj", "baje"]
@@ -239,20 +212,14 @@ def get_smart_time(text_input: str) -> str:
         local = utc_now.astimezone(pytz.timezone("Asia/Tokyo"))
         return f"{local.strftime('%I:%M %p')} (JST)"
 
-    # Default -> IST with full date
     local = utc_now.astimezone(pytz.timezone("Asia/Kolkata"))
     return f"{local.strftime('%A, %B %d, %I:%M %p')} (IST)"
 
 
-async def search_web(query: str) -> Optional[str]:
-    """Run a DuckDuckGo text search and return a formatted context block.
-
-    Returns None if the search yields no results or raises an exception.
-    """
+async def search_web(query: str) -> str | None:
+    """DuckDuckGo text search, formatted as a context block for the model."""
     try:
-        results = await asyncio.to_thread(
-            lambda: list(DDGS().text(query, max_results=2))
-        )
+        results = await asyncio.to_thread(lambda: list(DDGS().text(query, max_results=2)))
         if not results:
             return None
 
@@ -269,7 +236,7 @@ async def search_web(query: str) -> Optional[str]:
         return None
 
 
-async def search_gif_ddg(query: str) -> Optional[str]:
+async def search_gif_ddg(query: str) -> str | None:
     """Search DuckDuckGo Images for a GIF and return a random result URL."""
     try:
         results = await asyncio.to_thread(
@@ -282,18 +249,14 @@ async def search_gif_ddg(query: str) -> Optional[str]:
     return None
 
 
-async def process_gif_tags(text: str) -> tuple[str, Optional[str]]:
-    """Extract a [GIF: …] tag from *text*, search for the GIF, and strip the tag.
-
-    Returns (cleaned_text, gif_url). gif_url is None when no tag is present or
-    the search returns no results.
-    """
+async def process_gif_tags(text: str) -> tuple[str, str | None]:
+    """Extract a [GIF: ...] tag, search for the GIF, strip the tag from text."""
     match = re.search(r"\[GIF:\s*(.*?)\]", text, re.IGNORECASE)
-    gif_url: Optional[str] = None
+    gif_url: str | None = None
     if match:
-        query   = match.group(1).strip()
+        query = match.group(1).strip()
         gif_url = await search_gif_ddg(query)
-        text    = text.replace(match.group(0), "").strip()
+        text = text.replace(match.group(0), "").strip()
     return text, gif_url
 
 
@@ -301,14 +264,12 @@ async def fetch_channel_messages(
     channel: discord.abc.Messageable,
     *,
     fetch_limit: int = 100,
-    keep_limit:  int = 20,
+    keep_limit: int = 20,
     timeout_secs: float = 8.0,
 ) -> list[str]:
-    """Return up to *keep_limit* recent non-bot messages from *channel*.
+    """Recent non-bot messages as sanitised "Name: message" strings, oldest first.
 
-    Each entry is a sanitised "DisplayName: message" string ready for prompt
-    injection. Messages are returned in chronological order (oldest first).
-    Raises nothing — on timeout or any error the partial list is returned.
+    Returns whatever was collected even on timeout or error.
     """
     messages: list[str] = []
     try:
@@ -321,21 +282,22 @@ async def fetch_channel_messages(
                     messages.append(f"{msg.author.display_name}: {safe}")
                 if len(messages) >= keep_limit:
                     break
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.warning(
-            "fetch_channel_messages timed out after %.1fs in channel %s — "
+            "fetch_channel_messages timed out after %.1fs in channel %s, "
             "returning %d message(s) collected so far.",
-            timeout_secs, getattr(channel, "id", "?"), len(messages),
+            timeout_secs,
+            getattr(channel, "id", "?"),
+            len(messages),
         )
     except Exception as e:
-        log.warning("fetch_channel_messages error in channel %s: %s",
-                    getattr(channel, "id", "?"), e)
+        log.warning(
+            "fetch_channel_messages error in channel %s: %s", getattr(channel, "id", "?"), e
+        )
 
-    messages.reverse()  # chronological order: oldest -> newest
+    messages.reverse()  # oldest -> newest
     return messages
 
-
-# --- Discord helpers ---
 
 async def send_chunked_reply(
     destination,
@@ -343,11 +305,7 @@ async def send_chunked_reply(
     *,
     mention_user: bool = False,
 ) -> None:
-    """Send *text* to *destination*, splitting into CHUNK_SIZE chunks if needed.
-
-    *destination* may be a discord.Message (uses .reply on the first chunk),
-    a discord.Interaction (uses .followup.send), or any object with .send().
-    """
+    """Send *text* to a Message / Interaction / channel, splitting past 2000 chars."""
     if not text:
         return
 
@@ -368,18 +326,20 @@ async def send_chunked_reply(
 
 
 def get_user_dossier(member: discord.Member, include_presence: bool = True) -> str:
-    """Build a short text profile of *member* for use in AI prompts.
+    """Short text profile of *member* for AI prompts.
 
-    When *include_presence* is False, rich-presence details (Spotify, games,
-    custom status) are omitted — used when a user has opted out via /privacy.
+    Presence details (Spotify, games, custom status) are left out when the
+    user opted out via /privacy.
     """
-    now         = utcnow()
-    # member.created_at is timezone-aware (UTC) from discord.py
-    created_at  = member.created_at if member.created_at.tzinfo else member.created_at.replace(tzinfo=UTC)
-    age_days    = (now - created_at).days
-    years       = age_days // 365
+    now = utcnow()
+    # member.created_at is tz-aware in discord.py, guard just in case
+    created_at = (
+        member.created_at if member.created_at.tzinfo else member.created_at.replace(tzinfo=UTC)
+    )
+    age_days = (now - created_at).days
+    years = age_days // 365
 
-    roles     = [r.name for r in member.roles if r.name != "@everyone"]
+    roles = [r.name for r in member.roles if r.name != "@everyone"]
     roles_str = sanitize_for_prompt(", ".join(roles) if roles else "No Roles")
 
     if not include_presence:
@@ -420,29 +380,19 @@ async def get_user_history_text(
     *,
     limit: int = 15,
 ) -> str:
-    """Fetch recent conversation from MongoDB and format it for an AI prompt.
-
-    Fetches BOTH user messages and Yuri's replies so social commands like
-    /roast, /rate, /ship, and /compatibility can see the full relationship
-    dynamic — not just what the user said, but how Yuri responded to them.
-    Each line is labelled "User:" or "Yuri:" for clarity.
-
-    Returns a bullet-list string, or a fallback message if no history exists.
-    """
+    """Recent conversation (user + Yuri turns) formatted for a social-command prompt."""
     cursor = (
-        collection
-        .find({"user_id": user_id}, {"parts": 1, "role": 1, "_id": 0})
+        collection.find({"user_id": user_id}, {"parts": 1, "role": 1, "_id": 0})
         .sort("timestamp", -1)
         .limit(limit)
     )
     messages: list[str] = []
     async for doc in cursor:
         content = doc.get("parts", [""])[0]
-        role    = doc.get("role", "user")
-        label   = "Yuri" if role == "model" else "User"
+        role = doc.get("role", "user")
+        label = "Yuri" if role == "model" else "User"
         if isinstance(content, str) and content.strip():
-            # Truncate over-long messages instead of dropping them entirely —
-            # a long message often carries the most context.
+            # long messages usually carry the most context, truncate, don't drop
             if len(content) > HISTORY_MSG_MAX:
                 content = content[:HISTORY_MSG_MAX] + "…"
             messages.append(f"{label}: {sanitize_for_prompt(content)}")

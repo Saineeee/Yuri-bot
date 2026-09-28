@@ -1,31 +1,33 @@
-"""Tests for cogs/reminders.py — focused on the time parser, which is the
+"""Tests for cogs/reminders.py - focused on the time parser, which is the
 most logic-heavy piece of the new /remind command.
 
 The slash command itself is thin glue around parse_time_to_seconds + a
 MongoDB insert + a sweep loop, so we test the parser directly + add a
 source-level assertion that the new commands exist in general.py.
 """
-import unittest
-import os
-import sys
-from unittest.mock import MagicMock
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import os  # noqa: E402  # mocks must load first
+import sys  # noqa: E402  # mocks must load first
+import unittest  # noqa: E402  # mocks must load first
+from unittest.mock import MagicMock  # noqa: E402  # mocks must load first
 
-# --- Robust mock setup ---
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 # Other test files (test_general.py, test_social.py) may have already installed
-# their own MockCog into sys.modules['discord.ext.commands'].Cog — and their
+# their own MockCog into sys.modules['discord.ext.commands'].Cog - and their
 # MockCog lacks the .listener() classmethod that cogs/reactionroles.py needs at
 # import time. To make this test file order-independent, we:
 #   1. Force-reset the discord.* mock modules with our own MockCog that HAS listener
 #   2. Delete any cached cogs.reactionroles / cogs.reminders so they re-import
 #      against our (correct) mocks rather than reusing a broken cached version.
 
+
 class MockCog:
     @classmethod
     def listener(cls):
         def decorator(func):
             return func
+
         return decorator
 
     def __init__(self, *args, **kwargs):
@@ -39,8 +41,10 @@ mock_commands.Cog = MockCog
 def _passthrough_decorator(*args, **kwargs):
     if len(args) == 1 and callable(args[0]) and not kwargs:
         return args[0]
+
     def deco(fn):
         return fn
+
     return deco
 
 
@@ -50,15 +54,15 @@ mock_commands.is_owner = _passthrough_decorator
 mock_ext = MagicMock()
 mock_ext.commands = mock_commands
 
-# Force-reset — overwrite any mocks installed by other test files
-sys.modules['discord'] = MagicMock()
-sys.modules['discord.ext'] = mock_ext
-sys.modules['discord.ext.commands'] = mock_commands
-sys.modules['discord.ext.tasks'] = MagicMock()
-sys.modules['discord.app_commands'] = MagicMock()
+# Force-reset - overwrite any mocks installed by other test files
+sys.modules["discord"] = MagicMock()
+sys.modules["discord.ext"] = mock_ext
+sys.modules["discord.ext.commands"] = mock_commands
+sys.modules["discord.ext.tasks"] = MagicMock()
+sys.modules["discord.app_commands"] = MagicMock()
 
 # Delete cached cog modules so they re-import against our (correct) mocks
-for _mod in ('cogs.reactionroles', 'cogs.reminders'):
+for _mod in ("cogs.reactionroles", "cogs.reminders"):
     sys.modules.pop(_mod, None)
 
 # Now we can safely import the parser + reaction-role helpers.
@@ -67,8 +71,11 @@ for _mod in ('cogs.reactionroles', 'cogs.reminders'):
 # (test_general.py / test_social.py) will have re-installed their broken MockCog
 # (without .listener()) by then, and the @commands.Cog.listener() decorator in
 # cogs/reactionroles.py will raise AttributeError on import.
-from cogs.reminders import parse_time_to_seconds, MAX_REMINDER_DELAY_SECS
-from cogs.reactionroles import parse_entries, resolve_role, reaction_key
+from cogs.reactionroles import parse_entries, resolve_role  # noqa: E402  # mocks must load first
+from cogs.reminders import (  # noqa: E402  # mocks must load first
+    MAX_REMINDER_DELAY_SECS,
+    parse_time_to_seconds,
+)
 
 
 class TestTimeParser(unittest.TestCase):
@@ -125,7 +132,7 @@ class TestTimeParser(unittest.TestCase):
         self.assertIsNone(parse_time_to_seconds("abc123"))
 
     def test_max_delay_is_30_days(self):
-        # The parser itself doesn't enforce the cap, but the cog does —
+        # The parser itself doesn't enforce the cap, but the cog does -
         # here we just verify the constant is set to 30 days.
         self.assertEqual(MAX_REMINDER_DELAY_SECS, 30 * 86400)
 
@@ -135,69 +142,78 @@ class TestNewCommandsExist(unittest.TestCase):
 
     @staticmethod
     def _read(path):
-        full = os.path.join(os.path.dirname(__file__), '..', path)
-        with open(full, 'r', encoding='utf-8') as f:
+        full = os.path.join(os.path.dirname(__file__), "..", path)
+        with open(full, encoding="utf-8") as f:
             return f.read()
 
     def test_history_command_exists(self):
-        src = self._read('cogs/general.py')
+        src = self._read("cogs/general.py")
         self.assertIn('name="history"', src)
         # /history must be ephemeral (privacy: it shows the user's own data)
-        self.assertIn('ephemeral=True', src)
+        self.assertIn("ephemeral=True", src)
 
     def test_forgive_command_exists(self):
-        src = self._read('cogs/general.py')
+        src = self._read("cogs/general.py")
         self.assertIn('name="forgive"', src)
 
     def test_mood_command_exists(self):
-        src = self._read('cogs/general.py')
+        src = self._read("cogs/general.py")
         self.assertIn('name="mood"', src)
         # /mood must surface grudge state
-        self.assertIn('grudge_collection', src)
+        self.assertIn("grudge_collection", src)
 
     def test_8ball_command_exists(self):
-        src = self._read('cogs/general.py')
+        src = self._read("cogs/general.py")
         self.assertIn('name="8ball"', src)
         # Must have cooldown (spam guard)
-        self.assertIn('checks.cooldown', src)
+        self.assertIn("checks.cooldown", src)
 
     def test_translate_command_exists(self):
-        src = self._read('cogs/general.py')
+        src = self._read("cogs/general.py")
         self.assertIn('name="translate"', src)
-        # Must have language choices
-        self.assertIn('language=[app_commands.Choice', src)
+        # Must have language choices built from _SUPPORTED_LANGUAGES
+        self.assertIn("_SUPPORTED_LANGUAGES", src)
+        self.assertIn("app_commands.Choice", src)
 
     def test_avatar_command_exists(self):
-        src = self._read('cogs/general.py')
+        src = self._read("cogs/general.py")
         self.assertIn('name="avatar"', src)
 
     def test_remind_command_exists(self):
-        src = self._read('cogs/reminders.py')
+        src = self._read("cogs/reminders.py")
         self.assertIn('name="remind"', src)
         # Must persist to MongoDB (not in-memory)
-        self.assertIn('reminders_collection', src)
+        self.assertIn("reminders_collection", src)
         # Must have a sweep loop
-        self.assertIn('@tasks.loop', src)
+        self.assertIn("@tasks.loop", src)
 
     def test_setuproles_command_exists(self):
-        src = self._read('cogs/reactionroles.py')
+        src = self._read("cogs/reactionroles.py")
         self.assertIn('name="setuproles"', src)
         # Must require manage_roles permission
-        self.assertIn('has_permissions(manage_roles=True)', src)
+        self.assertIn("has_permissions(manage_roles=True)", src)
         # Must listen for reaction events
-        self.assertIn('on_raw_reaction_add', src)
-        self.assertIn('on_raw_reaction_remove', src)
+        self.assertIn("on_raw_reaction_add", src)
+        self.assertIn("on_raw_reaction_remove", src)
 
     def test_help_lists_new_commands(self):
-        src = self._read('cogs/general.py')
-        for cmd in ['/history', '/forgive', '/mood', '/8ball', '/translate',
-                    '/avatar', '/remind', '/setuproles']:
+        src = self._read("cogs/general.py")
+        for cmd in [
+            "/history",
+            "/forgive",
+            "/mood",
+            "/8ball",
+            "/translate",
+            "/avatar",
+            "/remind",
+            "/setuproles",
+        ]:
             self.assertIn(cmd, src, f"/help must list {cmd}")
 
     def test_main_py_registers_new_collections(self):
-        src = self._read('main.py')
-        self.assertIn('reminders_collection', src)
-        self.assertIn('reaction_roles_col', src)
+        src = self._read("main.py")
+        self.assertIn("reminders_collection", src)
+        self.assertIn("reaction_roles_col", src)
 
 
 class TestReactionRoleParsing(unittest.TestCase):
@@ -266,5 +282,5 @@ class TestReactionRoleParsing(unittest.TestCase):
         self.assertEqual(resolve_role("1001", self.guild), self.red_role)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -1,22 +1,22 @@
-"""Tests for cogs/social.py — focused on the high-risk integration points:
+"""Tests for cogs/social.py - focused on the high-risk integration points:
 
 - sanitize_for_discord is applied to every user-controlled embed description
   (this is the regression test for the @everyone ping-injection bug).
 - hotornot persists pending verdicts to MongoDB (survives bot restart).
 """
-import unittest
-import sys
-import os
-import asyncio
-import datetime
-from unittest.mock import MagicMock, patch, AsyncMock
+
+import datetime  # noqa: E402  # mocks must load first
+import os  # noqa: E402  # mocks must load first
+import sys  # noqa: E402  # mocks must load first
+import unittest  # noqa: E402  # mocks must load first
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402  # mocks must load first
 
 # Add root directory to path to import utils
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Mock heavy deps before importing the cog
-sys.modules['discord'] = MagicMock()
-sys.modules['discord.app_commands'] = MagicMock()
+sys.modules["discord"] = MagicMock()
+sys.modules["discord.app_commands"] = MagicMock()
 
 
 class MockCog:
@@ -32,11 +32,11 @@ mock_tasks.loop = lambda *a, **kw: (lambda f: f)
 mock_ext.commands = mock_commands
 mock_ext.tasks = mock_tasks
 
-sys.modules['discord.ext'] = mock_ext
-sys.modules['discord.ext.commands'] = mock_commands
-sys.modules['discord.ext.tasks'] = mock_tasks
+sys.modules["discord.ext"] = mock_ext
+sys.modules["discord.ext.commands"] = mock_commands
+sys.modules["discord.ext.tasks"] = mock_tasks
 
-import utils  # real utils — we want the real sanitize_for_discord here
+import utils  # real utils - we want the real sanitize_for_discord here  # noqa: E402  # mocks must load first
 
 
 class TestSanitizeForDiscord(unittest.TestCase):
@@ -94,7 +94,7 @@ class TestSharedSession(unittest.IsolatedAsyncioTestCase):
     async def test_get_session_returns_same_instance(self):
         # Reset the module-level session
         utils._session = None
-        with patch('utils.aiohttp.ClientSession') as mock_session_cls:
+        with patch("utils.aiohttp.ClientSession") as mock_session_cls:
             mock_session_cls.return_value = MagicMock(closed=False)
             s1 = utils.get_session()
             s2 = utils.get_session()
@@ -104,7 +104,7 @@ class TestSharedSession(unittest.IsolatedAsyncioTestCase):
 
     async def test_close_session_clears_global(self):
         utils._session = None
-        with patch('utils.aiohttp.ClientSession') as mock_session_cls:
+        with patch("utils.aiohttp.ClientSession") as mock_session_cls:
             mock_session = MagicMock()
             mock_session.closed = False
             mock_session.close = AsyncMock()
@@ -138,9 +138,11 @@ class TestHistoryTruncation(unittest.IsolatedAsyncioTestCase):
         ]
 
         cursor_mock = MagicMock()
+
         async def async_iter():
             for d in docs:
                 yield d
+
         cursor_mock.__aiter__ = lambda self: async_iter()
 
         # cursor_mock.sort().limit() chain
@@ -160,5 +162,5 @@ class TestHistoryTruncation(unittest.IsolatedAsyncioTestCase):
         self.assertIn("x" * 100, out)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
