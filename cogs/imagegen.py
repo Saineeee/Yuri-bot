@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 IMAGINE_MODEL = "imagen-3.0-generate-002"
 MAX_PROMPT_CHARS = 500
-IMAGINE_COOLDOWN_SECS = 30  # 1 image per 30s per user
+IMAGINE_COOLDOWN_SECS = 30
 
 
 class ImageGen(commands.Cog):
@@ -65,14 +65,12 @@ class ImageGen(commands.Cog):
         client = self.gemini_client
         if client is None:
             await interaction.followup.send(
-                "image generation isn't configured rn 💀 (no GEMINI_API_KEY)"
+                "image generation isn't configured rn (no GEMINI_API_KEY)"
             )
             return
 
-        # Sanitize the user prompt
         safe_prompt = utils.sanitize_for_prompt(prompt)
 
-        # First, let Yuri enhance the prompt with her personality
         ai = self.bot.get_cog("AI")
         enhanced_prompt = safe_prompt
         yuri_commentary = ""
@@ -91,7 +89,6 @@ class ImageGen(commands.Cog):
                 if enhanced and len(enhanced) < 1000:
                     enhanced_prompt = enhanced.strip().strip('"').strip("'")
 
-                # Generate a short Yuri commentary to accompany the image
                 commentary_override = (
                     f"The user just generated an image with the prompt: '{safe_prompt}'. "
                     f"Write ONE short sentence (max 15 words) reacting to it as Yuri. "
@@ -103,7 +100,6 @@ class ImageGen(commands.Cog):
             except Exception as e:
                 log.warning("prompt enhancement failed, using raw prompt: %s", e)
 
-        # Generate the image
         try:
             response = await client.aio.models.generate_images(
                 model=IMAGINE_MODEL,
@@ -115,14 +111,14 @@ class ImageGen(commands.Cog):
 
             if not response.generated_images:
                 await interaction.followup.send(
-                    "the image machine broke rn 💀 try a different prompt"
+                    "the image machine broke rn, try a different prompt"
                 )
                 return
 
             img_data = response.generated_images[0].image.image_bytes
             if not img_data:
                 await interaction.followup.send(
-                    "got an empty image back 💀 try again"
+                    "got an empty image back, try again"
                 )
                 return
 
@@ -131,16 +127,15 @@ class ImageGen(commands.Cog):
             err_msg = str(e).lower()
             if "safety" in err_msg or "blocked" in err_msg:
                 await interaction.followup.send(
-                    "that prompt got blocked by the safety filter bestie 💀 "
+                    "ayoo... that prompt got blocked by the safety filter bestie "
                     "keep it clean"
                 )
             else:
                 await interaction.followup.send(
-                    f"image generation failed rn 💀 ({type(e).__name__})"
+                    f"image generation failed rn ({type(e).__name__})"
                 )
             return
 
-        # Build the embed
         public_prompt = utils.sanitize_for_discord(prompt)
         public_commentary = utils.sanitize_for_discord(yuri_commentary) if yuri_commentary else ""
 
@@ -159,7 +154,6 @@ class ImageGen(commands.Cog):
 
         await interaction.followup.send(embed=embed, file=file)
 
-        # Log the generation for abuse tracking (7-day TTL auto-purges)
         await self.bot.image_gen_col.insert_one({
             "user_id": interaction.user.id,
             "username": interaction.user.name,
