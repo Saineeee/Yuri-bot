@@ -8,14 +8,14 @@ from typing import Optional
 import utils
 
 
-# --- Static data for low-effort commands ---
+# Static data for low-effort commands
 
 _8BALL_RESPONSES = [
-    "yes.", "no.", "lol no.", "obviously yes.", "lmao absolutely not.",
-    "idk man maybe??", "signs point to yes bestie 🌟", "don't even think about it.",
-    "100% yes.", "the vibes say... no 💀", "ask me later im busy",
-    "yep yep yep", "hard no.", "ugh fine yes.", "NOPE.",
-    "the universe says yes ✨", "i wouldn't if i were you", "trust me yes.",
+    "yes.", "no.", "lol no.", "obv yes.", "lmao absolutely not.",
+    "idk man maybe??", "signs point to yes bestie", "don't even think about it.",
+    "100% yes.", "the vibes say... no... hehe", "ask me later im busy",
+    "yep yep yep", "hard no.", "ugh yes.", "NOPE.",
+    "the universe says yes", "i wouldn't if i were you", "trust me yes.",
     "eh maybe who cares", "absolutely fr yes.",
 ]
 
@@ -56,12 +56,11 @@ class General(commands.Cog):
             (discord.ActivityType.watching, "you sleep"),
             (discord.ActivityType.playing, "DDLC"),
             (discord.ActivityType.listening, "to tea ☕"),
-            (discord.ActivityType.listening, "sarcasm.mp3")
+            (discord.ActivityType.listening, "fav songs")
         ]
         type_, name = random.choice(statuses)
-        # Use Status.online (green) — idle (yellow) makes the bot look unavailable.
         await self.bot.change_presence(
-            status=discord.Status.online,
+            status=discord.Status.dnd,
             activity=discord.Activity(type=type_, name=name),
         )
 
@@ -77,7 +76,7 @@ class General(commands.Cog):
             color=discord.Color.from_rgb(255, 105, 180) # Hot Pink
         )
         
-        # --- JUDGMENT COMMANDS ---
+        # Judgement Commands
         embed.add_field(
             name="👀 **JUDGMENT**", 
             value=(
@@ -90,9 +89,9 @@ class General(commands.Cog):
             inline=False
         )
         
-        # --- SOCIAL & FUN ---
+        # Social & Fun
         embed.add_field(
-            name="🔥 **DRAMA & CHAOS**",
+            name="**DRAMA & CHAOS**",
             value=(
                 "`/rename @user` - Give someone a cursed nickname.\n"
                 "`/truth` - Get a spicy Truth question.\n"
@@ -112,9 +111,9 @@ class General(commands.Cog):
             inline=False
         )
 
-        # --- UTILITY ---
+        # Utility
         embed.add_field(
-            name="🧠 **BRAIN**",
+            name="**BRAIN**",
             value=(
                 "`/ask [question]` - Ask me anything (I have Internet access + tools).\n"
                 "`/translate [text] [language]` - Translate text in Yuri's voice.\n"
@@ -133,9 +132,9 @@ class General(commands.Cog):
             inline=False
         )
 
-         # --- ADMIN ONLY ---
+         # Admin Only
         embed.add_field(
-            name="🪽️ **ADMIN ONLY**",
+            name="**ADMIN ONLY**",
             value=(
                 "`/setup [channel]` - Set where confessions appear.\n"
                 "`/grudge @user` - Make me hate someone permanently.\n"
@@ -162,14 +161,10 @@ class General(commands.Cog):
         })
         
         response = "ok sent."
-        if category.value == "bug": response = "👾 **Bug Reported.** Thanks for reporting, We will look after it."
-        elif category.value == "feature": response = "✨ **Suggestion Sent.** We will see what we can do."
+        if category.value == "bug": response = "**Bug Reported.** Thanks for reporting, We will look after it."
+        elif category.value == "feature": response = "**Suggestion Sent.** We will see what we can do."
         
         await interaction.followup.send(response)
-
-    # ------------------------------------------------------------------
-    # /history — view your own last N messages with Yuri
-    # ------------------------------------------------------------------
 
     @app_commands.command(
         name="history",
@@ -182,7 +177,6 @@ class General(commands.Cog):
         export is via /export, and this command lets you peek without dumping a
         full file. The response is ephemeral so it's private to the caller.
         """
-        # Clamp count to a sane range
         count = max(1, min(count, 15))
 
         await interaction.response.defer(ephemeral=True)
@@ -191,7 +185,7 @@ class General(commands.Cog):
             self.bot.chat_collection
             .find({"user_id": interaction.user.id}, {"_id": 0, "parts": 1, "role": 1, "timestamp": 1})
             .sort("timestamp", -1)
-            .limit(count * 2)  # each exchange = 1 user + 1 model turn
+            .limit(count * 2)
         )
 
         docs = [doc async for doc in cursor]
@@ -203,10 +197,10 @@ class General(commands.Cog):
             )
             return
 
-        docs.reverse()  # chronological order
+        docs.reverse()
 
         embed = discord.Embed(
-            title="📜 YOUR CHAT HISTORY WITH YURI",
+            title="ℹ️ YOUR CHAT HISTORY WITH YURI",
             color=discord.Color.from_rgb(255, 105, 180),
             timestamp=utils.utcnow(),
         )
@@ -218,11 +212,8 @@ class General(commands.Cog):
             content = doc.get("parts", [""])[0]
             if not isinstance(content, str):
                 content = str(content)
-            # Truncate very long messages so the embed fits Discord's 4096-char description limit
             if len(content) > 300:
                 content = content[:300] + "…"
-            # sanitize before displaying (defensive — content is the user's own,
-            # but stored model output may contain mention-shaped text)
             content = utils.sanitize_for_discord(content)
             ts = doc.get("timestamp")
             ts_str = ts.strftime("%b %d, %H:%M") if hasattr(ts, "strftime") else ""
@@ -235,14 +226,9 @@ class General(commands.Cog):
         try:
             await interaction.followup.send(embed=embed, ephemeral=True)
         except discord.HTTPException as e:
-            # Embed too large? Strip fields and send a shorter version
             embed.clear_fields()
             embed.description = f"history too long to display inline — try `/export` for the full file. ({e})"
             await interaction.followup.send(embed=embed, ephemeral=True)
-
-    # ------------------------------------------------------------------
-    # /forgive — reset Yuri's attitude (in conversation) without wiping history
-    # ------------------------------------------------------------------
 
     @app_commands.command(
         name="forgive",
@@ -257,17 +243,12 @@ class General(commands.Cog):
         """
         await interaction.response.defer()
 
-        # Clear any admin-set grudge for this user (only if the user themselves
-        # is asking — admins still have /ungrudge for explicit control). To avoid
-        # letting users bypass admin grudges, we DON'T clear admin-set grudges
-        # here. We only insert a soft-reset prompt that the model can choose to
-        # honor (or not, if it's still feeling petty).
         apology = message or ""
         safe_apology = utils.sanitize_for_prompt(apology) if apology else "(no message — just vibes)"
 
         ai = self.bot.get_cog("AI")
         if ai is None:
-            await interaction.followup.send("my brain isn't loaded rn try again 💀")
+            await interaction.followup.send("my brain isn't loaded rn try again later")
             return
 
         prompt_override = (
@@ -281,7 +262,6 @@ class General(commands.Cog):
             interaction.user.id, None, prompt_override=prompt_override
         )
 
-        # Mark the forgive attempt in chat history so the model sees it next turn
         await self.bot.chat_collection.insert_one({
             "user_id": interaction.user.id,
             "role": "user",
@@ -290,10 +270,6 @@ class General(commands.Cog):
         })
 
         await utils.send_chunked_reply(interaction, resp)
-
-    # ------------------------------------------------------------------
-    # /mood — how does Yuri feel about me right now?
-    # ------------------------------------------------------------------
 
     @app_commands.command(
         name="mood",
@@ -315,9 +291,9 @@ class General(commands.Cog):
         crush_received = await self.bot.crush_collection.find_one({"target_id": uid})
 
         if grudge:
-            mood_line = "💀 **COLD CHAOS MODE.** An admin has set a grudge against you — I'm being cold/dismissive on purpose."
+            mood_line = "**COLD CHAOS MODE.** An admin has set a grudge against you — I'm being cold/dismissive on purpose."
         else:
-            mood_line = "🌸 **Soft Bestie mode.** No grudges. We're chill bestie."
+            mood_line = "**Soft Bestie mode.** No grudges. We're chill bestie."
 
         embed = discord.Embed(
             title="💭 YURI'S MOOD ABOUT YOU",
@@ -343,7 +319,7 @@ class General(commands.Cog):
         if crush_received:
             embed.add_field(
                 name="💌 Someone likes you",
-                value="Someone has a crush on you! Run `/crush` on whoever you like to see if it's a match. (I won't tell you who — that's the point 🤫)",
+                value="Someone has a crush on you! Run `/crush` on whoever you like to see if it's a match. (I won't tell you who, that's the point 🤫)",
                 inline=False,
             )
         else:
@@ -356,20 +332,16 @@ class General(commands.Cog):
         embed.set_footer(text="use /forgive to reset the vibe • /clearhistory to wipe memory")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    # ------------------------------------------------------------------
-    # /8ball — magic 8-ball
-    # ------------------------------------------------------------------
-
     @app_commands.command(
         name="8ball",
         description="Ask the magic 8-ball a yes/no question.",
     )
-    @app_commands.checks.cooldown(1, 3.0)  # 1 use per 3s — spam guard
+    @app_commands.checks.cooldown(1, 3.0)
     async def eight_ball(self, interaction: discord.Interaction, question: str) -> None:
         """Classic magic 8-ball. Cheap, fast, no AI call required."""
         if len(question) > 500:
             await interaction.response.send_message(
-                "that question is way too long bestie 💀 keep it under 500 chars",
+                "yoo.... that question is way too long bestie, keep it under 500 chars",
                 ephemeral=True,
             )
             return
@@ -384,10 +356,6 @@ class General(commands.Cog):
         embed.add_field(name="❓ Question", value=safe_q, inline=False)
         embed.add_field(name="🔮 Answer", value=f"**{answer}**", inline=False)
         await interaction.response.send_message(embed=embed)
-
-    # ------------------------------------------------------------------
-    # /translate — AI-powered translation
-    # ------------------------------------------------------------------
 
     @app_commands.command(
         name="translate",
@@ -410,7 +378,7 @@ class General(commands.Cog):
         """
         if len(text) > 1500:
             await interaction.response.send_message(
-                "too long bestie 💀 keep it under 1500 chars",
+                "too long bestie, keep it under 1500 chars",
                 ephemeral=True,
             )
             return
@@ -418,7 +386,7 @@ class General(commands.Cog):
         await interaction.response.defer()
 
         safe_text = utils.sanitize_for_prompt(text)
-        lang_name = language.name  # human-readable label from the Choice
+        lang_name = language.name
 
         ai = self.bot.get_cog("AI")
         if ai is None:
@@ -441,7 +409,6 @@ class General(commands.Cog):
             description=resp,
             color=discord.Color.from_rgb(255, 105, 180),
         )
-        # Show the original text too, sanitized for display
         embed.add_field(
             name="Original",
             value=utils.sanitize_for_discord(text)[:1024],
@@ -449,10 +416,6 @@ class General(commands.Cog):
         )
         embed.set_footer(text="powered by Yuri's brain • not 100% accurate")
         await interaction.followup.send(embed=embed)
-
-    # ------------------------------------------------------------------
-    # /avatar — display a user's avatar
-    # ------------------------------------------------------------------
 
     @app_commands.command(
         name="avatar",
@@ -469,7 +432,6 @@ class General(commands.Cog):
         """
         target = member or interaction.user
 
-        # display_avatar handles users with no custom avatar (falls back to default)
         avatar = target.display_avatar
 
         embed = discord.Embed(
@@ -479,7 +441,6 @@ class General(commands.Cog):
         embed.set_image(url=avatar.url)
         embed.set_footer(text=f"User ID: {target.id}")
 
-        # Add links to common sizes for convenience
         embed.add_field(
             name="Sizes",
             value=(
