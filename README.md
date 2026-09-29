@@ -3,7 +3,6 @@
 ![Python Version](https://img.shields.io/badge/Python-3.11-blue)
 ![Discord.py](https://img.shields.io/badge/discord.py-v2.0+-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Tests](https://img.shields.io/badge/tests-139%20passing-brightgreen)
 
 Yuri is a highly interactive, chaotic, and dramatic Gen Z AI Discord bot. Unlike standard, polite AI assistants, Yuri is designed with a specific, opinionated teenage persona. She will roast you, judge your vibe, gossip, and dramatically deny being an AI if accused.
 
